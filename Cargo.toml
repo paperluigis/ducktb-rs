@@ -1,0 +1,21 @@
+[package]
+name = "ducktb-sv1"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures-channel = "0.3.28"
+futures-util = "0.3.28"
+json = "0.12.4"
+nix = "0.26.2"
+random-string = "1.0.0"
+simple-websockets = "0.1.6"
+tokio = "1.29.1"
+tokio-tungstenite = "0.20.0"
+tungstenite = "0.20.0"
+
+[[bin]]
+name = "ducktb-sv1"
+path = "main.rs"
