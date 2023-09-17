@@ -25,35 +25,42 @@ use std::sync::{Arc, Mutex};
 use std::mem::drop;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-type SusMap = Arc<Mutex<HashMap<u32, Susser>>>;
-type SusRoom = Arc<Mutex<HashMap<u32, Room>>>;
+type UserNick = String;
+// format is 0rgb
+type UserColor = u32;
+type UserID = u32;
+type RoomID = String;
+type UserHashedIP = u64;
+
+type SusMap = Arc<Mutex<HashMap<UserID, Susser>>>;
+type SusRoom = Arc<Mutex<HashMap<RoomID, Room>>>;
 
 struct HistMsg {
-	home: String,
-	sid: u32,
+	home: UserHashedIP,
+	sid: UserID,
 	content: String,
-	nick: String,
-	color: u32
+	nick: UserNick,
+	color: UserColor
 }
 struct HistJoin {
-	home: String,
-	sid: u32,
-	nick: String,
-	color: u32
+	home: UserHashedIP,
+	sid: UserID,
+	nick: UserNick,
+	color: UserColor
 }
 struct HistLeave {
-	home: String,
-	sid: u32,
-	nick: String,
-	color: u32
+	home: UserHashedIP,
+	sid: UserID,
+	nick: UserNick,
+	color: UserColor
 }
 struct HistChNick {
-	hole: String,
-	sid: u32,
-	old_nick: String,
-	old_color: u32,
-	new_nick: String,
-	new_color: u32
+	home: UserHashedIP,
+	sid: UserID,
+	old_nick: UserNick,
+	old_color: UserColor,
+	new_nick: UserNick,
+	new_color: UserColor
 }
 enum HistEntry {
 	Message(HistMsg),
@@ -82,11 +89,10 @@ struct SusRate {
 struct Susser {
 	counter: SusRate,
 	is_typing: bool,
-	in_room: String,
-	nick: String,
-	// 0x00rrggbb
-	color: u32,
-	haship: u64,
+	in_room: RoomID,
+	nick: UserNick,
+	color: UserColor,
+	haship: UserHashedIP,
 	tx: UnboundedSender<Message>
 }
 
@@ -101,16 +107,16 @@ async fn main() {
 	let rf = que.as_raw_fd();
 	setsockopt(rf, sockopt::ReuseAddr, &true).ok();
 	println!("pls work :skull: (listening on {}), server string '{}'", wtf, abbi);
-	let mut conn_seq: u32 = 0x48aeb931;
+	let mut conn_seq: UserID = 0x48aeb931;
 	let ducks = SusMap::new(Mutex::new(HashMap::new()));
 	let rooms = SusRoom::new(Mutex::new(HashMap::new()));
 	while let Ok((flow, _)) = que.accept().await {
-		spawn(conn(flow, conn_seq, ducks.clone(), abbi.clone()));
+		spawn(conn(flow, conn_seq, ducks.clone(), rooms.clone(), abbi.clone()));
 		conn_seq += 1984;
 	}
 }
 
-async fn conn(s: TcpStream, seq: u32, ducks: SusMap, srv: String) {
+async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: String) {
 	let addr = s.peer_addr().unwrap();
 	println!("\x1b[33mconn+ \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, addr);
 	let bs = accept_async(s).await;
@@ -155,7 +161,7 @@ async fn conn(s: TcpStream, seq: u32, ducks: SusMap, srv: String) {
 				match msg {
 					Ok(a) => match a {
 						Message::Text(str) => {
-							if !message(str, seq, &ducks, get_ts(), msg_1st).await { break };
+							if !message(str, seq, &ducks, &rooms, get_ts(), msg_1st).await { break };
 							msg_1st = false;
 						}
 						_ => break
@@ -183,7 +189,7 @@ async fn conn(s: TcpStream, seq: u32, ducks: SusMap, srv: String) {
 	let _ = tws.close().await;
     println!("\x1b[31mconn- \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, addr);
 
-	leave_room(seq, &ducks);
+	leave_room(seq, &ducks, &rooms);
 	// println!("ducks mutex lock on line {}", std::line!());
 	let mut dorks = ducks.lock().unwrap();
 	//let duck = dorks.get_mut(&seq).unwrap();
@@ -191,7 +197,7 @@ async fn conn(s: TcpStream, seq: u32, ducks: SusMap, srv: String) {
 	drop(dorks);
 }
 
-fn leave_room(id: u32, ducks: &SusMap) {
+fn leave_room(id: UserID, ducks: &SusMap, rooms: &SusRoom) {
 	// println!("ducks mutex lock on line {}", std::line!());
 	let mut lurks = ducks.lock().unwrap();
 	let mut x = lurks.get_mut(&id).unwrap();
@@ -204,13 +210,13 @@ fn leave_room(id: u32, ducks: &SusMap) {
 	send_broad(&room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &room) ]);
 }
 
-fn join_room(room: &str, id: u32, ducks: &SusMap) {
+fn join_room(room: &str, id: UserID, ducks: &SusMap, rooms: &SusRoom) {
 	// println!("ducks mutex lock on line {}", std::line!());
 	let mut lurks = ducks.lock().unwrap();
 	let x = lurks.get_mut(&id).unwrap();
 	if room == x.in_room { return }
 	drop(lurks);
-	leave_room(id, ducks);
+	leave_room(id, ducks, rooms);
 	// println!("ducks mutex lock on line {}", std::line!());
 	let mut lurks = ducks.lock().unwrap();
 	let x = lurks.get_mut(&id).unwrap();
@@ -226,6 +232,8 @@ fn join_room(room: &str, id: u32, ducks: &SusMap) {
 	send_broad(room.into(), &ducks, "USER_JOINED".into(), array![{ sid: idtostr(id), nick: nick.clone(), color: col.clone(), time: ts }]);
 	send_broad(room.into(), &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, room) ]);
 }
+
+fn send_userjoin(to_room: &str, ducks: &SusMap, rooms: &SusRoom, nick: &str, color: UserColor, uid: UserID) {}
 
 fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: json::JsonValue) {
 	if t != "MOUSE" {
@@ -243,7 +251,7 @@ fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: json::JsonValue) {
 	}
 }
 
-fn send_uni(to_id: u32, ducks: &SusMap, t: String, val: json::JsonValue) {
+fn send_uni(to_id: UserID, ducks: &SusMap, t: String, val: json::JsonValue) {
 	println!("\x1b[34mtx    \x1b[34m[{:0>8x}]\x1b[0m {:?} {}", to_id, t, val.dump());
 	// println!("ducks mutex lock on line {}", std::line!());
 	let ducks = ducks.lock().unwrap();
@@ -251,7 +259,7 @@ fn send_uni(to_id: u32, ducks: &SusMap, t: String, val: json::JsonValue) {
 	let _ = ducks.get(&to_id).unwrap().tx.unbounded_send(Message::Text(format!("{}\0{}", t, val.dump())));
 }
 
-async fn message(str: String, id: u32, ducks: &SusMap, ts: u64, first: bool) -> bool {
+async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u64, first: bool) -> bool {
 	let f = str.find("\0");
 	if f.is_none() {
 		return false;
@@ -291,7 +299,7 @@ async fn message(str: String, id: u32, ducks: &SusMap, ts: u64, first: bool) -> 
 		sus.color = color;
 		// sus.in_room = room.to_string();
 		drop(unducks);
-		join_room(room, id, &ducks);
+		join_room(room, id, &ducks, &rooms);
 	} else {
 		match tp {
 			"MESSAGE\0" => {
@@ -375,7 +383,7 @@ async fn message(str: String, id: u32, ducks: &SusMap, ts: u64, first: bool) -> 
 				let color = color.unwrap();
 				let room: String;
 				let pnick: String;
-				let pcol: u32;
+				let pcol: UserColor;
 				{
 					let mut lel = ducks.lock().unwrap();
 					let lel = lel.get_mut(&id).unwrap();
@@ -400,7 +408,7 @@ async fn message(str: String, id: u32, ducks: &SusMap, ts: u64, first: bool) -> 
 				if room == "" {
 					return false;
 				}
-				join_room(room, id, &ducks);
+				join_room(room, id, &ducks, &rooms);
 			}
 			_ => {
 				println!("skull emoji");
@@ -441,7 +449,7 @@ fn ducktotyp(ducks: &SusMap, room: &str) -> json::JsonValue {
 	return arr;
 }
 
-fn coltou32(inp: &str) -> Option<u32> {
+fn coltou32(inp: &str) -> Option<UserColor> {
 	if inp.len() == 7 && inp.starts_with("#") {
 		return u32::from_str_radix(&inp[1..], 16).ok();
 	} else {
@@ -449,10 +457,10 @@ fn coltou32(inp: &str) -> Option<u32> {
 	}
 }
 
-fn u32tocol(inp: u32) -> String {
+fn u32tocol(inp: UserColor) -> String {
 	return format!("#{:0>6x}", inp);
 }
-fn idtostr(inp: u32) -> String {
+fn idtostr(inp: UserID) -> String {
 	return format!("{:0>8x}", inp);
 }
 fn hidtostr(inp: u64) -> String {
