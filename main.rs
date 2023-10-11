@@ -85,6 +85,7 @@ struct Room {
 	conn_users: u16
 }
 
+const LOBBY_ROOM_NAME: &str = "lobby";
 const HIST_ENTRY_MAX: usize = 512;
 const MAX_MOUSE: u8 = 100;
 const MAX_CHNICK: u8 = 1;
@@ -224,7 +225,7 @@ fn leave_room(id: UserID, ducks: &SusMap, rooms: &SusRoom) {
 	let mut rooks = rooms.lock().unwrap();
 	let hoho = rooks.get_mut(&room).unwrap();
 	hoho.conn_users -= 1;
-	if hoho.conn_users != 0 { return }
+	if hoho.conn_users != 0 || room == LOBBY_ROOM_NAME { return }
 	rooks.remove(&room);
 }
 
@@ -440,7 +441,7 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 		if	color.is_none() { return false }
 		let nick = nick.as_str().unwrap().trim();
 		let color = color.unwrap();
-		let room = room.as_str().unwrap_or("lobby").trim();
+		let room = room.as_str().unwrap_or(LOBBY_ROOM_NAME).trim();
 		if	nick == "" ||
 			room == "" { return false }
 		sus.nick = nick.to_string();
