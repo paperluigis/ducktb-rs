@@ -35,33 +35,43 @@ type UserHashedIP = u64;
 type SusMap = Arc<Mutex<HashMap<UserID, Susser>>>;
 type SusRoom = Arc<Mutex<HashMap<RoomID, Room>>>;
 
+#[derive(Debug)]
 struct HistMsg {
 	home: UserHashedIP,
 	sid: UserID,
 	content: String,
 	nick: UserNick,
-	color: UserColor
+	color: UserColor,
+	ts: u64
 }
+#[derive(Debug)]
 struct HistJoin {
 	home: UserHashedIP,
 	sid: UserID,
 	nick: UserNick,
-	color: UserColor
+	color: UserColor,
+	ts: u64
 }
+#[derive(Debug)]
 struct HistLeave {
 	home: UserHashedIP,
 	sid: UserID,
 	nick: UserNick,
-	color: UserColor
+	color: UserColor,
+	ts: u64
 }
+#[derive(Debug)]
 struct HistChNick {
 	home: UserHashedIP,
 	sid: UserID,
 	old_nick: UserNick,
 	old_color: UserColor,
 	new_nick: UserNick,
-	new_color: UserColor
+	new_color: UserColor,
+	ts: u64
 }
+
+#[derive(Debug)]
 enum HistEntry {
 	Message(HistMsg),
 	Join(HistJoin),
@@ -70,9 +80,12 @@ enum HistEntry {
 }
 
 struct Room {
-	hist: VecDeque<HistEntry>
+	hist: VecDeque<HistEntry>,
+	// refcounting
+	conn_users: u16
 }
 
+const HIST_ENTRY_MAX: usize = 512;
 const MAX_MOUSE: u8 = 100;
 const MAX_CHNICK: u8 = 1;
 const MAX_MESSAGE: u8 = 5;
@@ -117,11 +130,11 @@ async fn main() {
 }
 
 async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: String) {
-	let addr = s.peer_addr().unwrap();
+	let addr = s.peer_addr().expect("what da hell man");
 	println!("\x1b[33mconn+ \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, addr);
 	let bs = accept_async(s).await;
 	if !bs.is_ok() {
-		println!("...nvm");
+		println!("...nevermind that");
 		return;
 	}
 	let (tx, mut rx) = unbounded();
@@ -138,7 +151,6 @@ async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: Str
 		tx: tx,
 	};
 	let mut msg_1st = true;
-	// println!("ducks mutex lock on line {}", std::line!());
 	ducks.lock().unwrap().insert(seq, sus);
 
 	// DO I LOOK LIKE I CARE-
@@ -190,50 +202,189 @@ async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: Str
     println!("\x1b[31mconn- \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, addr);
 
 	leave_room(seq, &ducks, &rooms);
-	// println!("ducks mutex lock on line {}", std::line!());
 	let mut dorks = ducks.lock().unwrap();
 	//let duck = dorks.get_mut(&seq).unwrap();
 	dorks.remove(&seq);
-	drop(dorks);
+	//drop(dorks);
 }
 
 fn leave_room(id: UserID, ducks: &SusMap, rooms: &SusRoom) {
-	// println!("ducks mutex lock on line {}", std::line!());
 	let mut lurks = ducks.lock().unwrap();
-	let mut x = lurks.get_mut(&id).unwrap();
+	let x = lurks.get_mut(&id).unwrap();
+	let nick = x.nick.clone();
+	let col = x.color;
+	let hip = x.haship;
 	let room = x.in_room.clone();
 	if room == "" { return }
 	x.in_room = "".to_string();
 	drop(lurks);
 	let ts = get_ts();
-	send_broad(&room, &ducks, "USER_LEFT".into(), array![ idtostr(id), ts ]);
-	send_broad(&room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &room) ]);
+	send_userleave(room.clone(), &ducks, &rooms, &nick, col, id, hip, ts);
+
+	let mut rooks = rooms.lock().unwrap();
+	let hoho = rooks.get_mut(&room).unwrap();
+	hoho.conn_users -= 1;
+	if hoho.conn_users != 0 { return }
+	rooks.remove(&room);
 }
 
-fn join_room(room: &str, id: UserID, ducks: &SusMap, rooms: &SusRoom) {
-	// println!("ducks mutex lock on line {}", std::line!());
+fn join_room(room: RoomID, id: UserID, ducks: &SusMap, rooms: &SusRoom) {
+	let room = room.to_string();
 	let mut lurks = ducks.lock().unwrap();
 	let x = lurks.get_mut(&id).unwrap();
 	if room == x.in_room { return }
 	drop(lurks);
 	leave_room(id, ducks, rooms);
-	// println!("ducks mutex lock on line {}", std::line!());
 	let mut lurks = ducks.lock().unwrap();
 	let x = lurks.get_mut(&id).unwrap();
+
+	let mut rooks = rooms.lock().unwrap();
+	if !rooks.contains_key(&room) {
+		let hoho = Room {
+			conn_users: 0,
+			hist: VecDeque::new()
+		};
+		rooks.insert(room.clone(), hoho);
+	}
+	let hoho = rooks.get_mut(&room).unwrap();
+	hoho.conn_users += 1;
 	let nick = x.nick.to_string();
-	let col = u32tocol(x.color);
+	let col = x.color;
+	let hip = x.haship;
 	x.in_room = room.to_string();
 	drop(lurks);
 	let ts = get_ts();
-	send_uni(id, &ducks, "ROOM".into(), array![room]);
-	// TODO: implement history
-	send_uni(id, &ducks, "HISTORY".into(), array![[]]);
+	send_uni(id, &ducks, "ROOM".into(), array![room.clone()]);
+	send_uni(id, &ducks, "HISTORY".into(), array![hist2json(&hoho.hist)]);
 
-	send_broad(room.into(), &ducks, "USER_JOINED".into(), array![{ sid: idtostr(id), nick: nick.clone(), color: col.clone(), time: ts }]);
-	send_broad(room.into(), &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, room) ]);
+	drop(rooks);
+	send_userjoin(room, &ducks, &rooms, &nick, col, id, hip, ts);
 }
 
-fn send_userjoin(to_room: &str, ducks: &SusMap, rooms: &SusRoom, nick: &str, color: UserColor, uid: UserID) {}
+fn hist2json(v: &VecDeque<HistEntry>) -> json::JsonValue {
+	let mut a = json::JsonValue::Array(Vec::with_capacity(v.len()));
+	for entry in v.iter() {
+		let _ = a.push(match entry {
+			HistEntry::Leave(b) => object!{
+				left: true,
+				time: b.ts,
+				home: hidtostr(b.home),
+				sid: idtostr(b.sid),
+				nick: b.nick.to_string(),
+				color: u32tocol(b.color)
+			},
+			HistEntry::Join(b) => object!{
+				joined: true,
+				time: b.ts,
+				home: hidtostr(b.home),
+				sid: idtostr(b.sid),
+				nick: b.nick.to_string(),
+				color: u32tocol(b.color)
+			},
+			HistEntry::Message(b) => object!{
+				time: b.ts,
+				home: hidtostr(b.home),
+				sid: idtostr(b.sid),
+				nick: b.nick.to_string(),
+				color: u32tocol(b.color),
+				message: b.content.clone()
+			},
+			HistEntry::ChNick(b) => object! {
+				time: b.ts,
+				home: hidtostr(b.home),
+				sid: idtostr(b.sid),
+				nick: b.old_nick.to_string(),
+				color: u32tocol(b.old_color),
+				newnick: b.new_nick.to_string(),
+				newcolor: u32tocol(b.new_color),
+			}
+		});
+	}
+	return a;
+}
+
+fn send_userleave(to_room: RoomID, ducks: &SusMap, rooms: &SusRoom,
+	nick: &str, col: UserColor, uid: UserID, ip: UserHashedIP, ts: u64) {
+	let mut rooks = rooms.lock().unwrap();
+	let hoho = rooks.get_mut(&to_room).unwrap();
+	let entry = HistEntry::Leave(HistLeave {
+		nick: nick.into(),
+		home: ip,
+		color: col,
+		sid: uid,
+		ts: ts
+	});
+	if hoho.hist.len() >= HIST_ENTRY_MAX {
+		let _ = hoho.hist.pop_front();
+	}
+	hoho.hist.push_back(entry);
+	send_broad(&to_room, &ducks, "USER_LEFT".into(), array![ idtostr(uid), ts ]);
+	send_broad(&to_room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &to_room) ]);
+}
+
+fn send_userjoin(to_room: RoomID, ducks: &SusMap, rooms: &SusRoom,
+	nick: &str, col: UserColor, uid: UserID, ip: UserHashedIP, ts: u64) {
+	let mut rooks = rooms.lock().unwrap();
+	let hoho = rooks.get_mut(&to_room).unwrap();
+	let entry = HistEntry::Join(HistJoin {
+		nick: nick.into(),
+		home: ip,
+		color: col,
+		sid: uid,
+		ts: ts
+	});
+	if hoho.hist.len() >= HIST_ENTRY_MAX {
+		let _ = hoho.hist.pop_front();
+	}
+	hoho.hist.push_back(entry);
+	send_broad(&to_room, &ducks, "USER_JOINED".into(), array![{ sid: idtostr(uid), nick: nick.clone(), color: u32tocol(col), time: ts }]);
+	send_broad(&to_room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &to_room) ]);
+}
+
+fn send_userchnick(to_room: RoomID, ducks: &SusMap, rooms: &SusRoom,
+	old_nick: &str, old_col: UserColor, new_nick: &str, new_col: UserColor,
+	uid: UserID, ip: UserHashedIP, ts: u64) {
+	let mut rooks = rooms.lock().unwrap();
+	let hoho = rooks.get_mut(&to_room).unwrap();
+	let entry = HistEntry::ChNick(HistChNick {
+		old_nick: old_nick.into(),
+		new_nick: new_nick.into(),
+		home: ip,
+		old_color: old_col,
+		new_color: new_col,
+		sid: uid,
+		ts: ts
+	});
+	if hoho.hist.len() >= HIST_ENTRY_MAX {
+		let _ = hoho.hist.pop_front();
+	}
+	hoho.hist.push_back(entry);
+	send_broad(&to_room, ducks, "USER_CHANGE_NICK".into(), array![idtostr(uid), [old_nick,u32tocol(old_col)],[new_nick,u32tocol(new_col)], ts]);
+	send_broad(&to_room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &to_room) ]);
+}
+
+fn send_message(to_room: RoomID, ducks: &SusMap, rooms: &SusRoom,
+	nick: &str, col: UserColor, content: String, uid: UserID, ip: UserHashedIP, ts: u64) {
+	let mut rooks = rooms.lock().unwrap();
+	let hoho = rooks.get_mut(&to_room).unwrap();
+	let entry = HistEntry::Message(HistMsg {
+		nick: nick.into(),
+		home: ip,
+		color: col,
+		sid: uid,
+		ts: ts,
+		content: content.clone()
+	});
+	if hoho.hist.len() >= HIST_ENTRY_MAX {
+		let _ = hoho.hist.pop_front();
+	}
+	hoho.hist.push_back(entry);
+	send_broad(&to_room, ducks, "MESSAGE".into(), array![{
+		sid: idtostr(uid),
+		time: ts,
+		content: content.clone()
+	}]);
+}
 
 fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: json::JsonValue) {
 	if t != "MOUSE" {
@@ -243,7 +394,6 @@ fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: json::JsonValue) {
 			println!("\x1b[33mtx    \x1b[34m[broadcast|\x1b[37m{}\x1b[34m]\x1b[0m {:?} {}", to_room, t, val.dump());
 		}
 	}
-	// println!("ducks mutex lock on line {}", std::line!());
 	let ducks = ducks.lock().unwrap();
 	for (_, sus) in ducks.iter() {
 		if to_room != "" && sus.in_room != to_room { continue }
@@ -253,7 +403,6 @@ fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: json::JsonValue) {
 
 fn send_uni(to_id: UserID, ducks: &SusMap, t: String, val: json::JsonValue) {
 	println!("\x1b[34mtx    \x1b[34m[{:0>8x}]\x1b[0m {:?} {}", to_id, t, val.dump());
-	// println!("ducks mutex lock on line {}", std::line!());
 	let ducks = ducks.lock().unwrap();
 	// I DON'T FUCKING CARE IF SEND FAILS
 	let _ = ducks.get(&to_id).unwrap().tx.unbounded_send(Message::Text(format!("{}\0{}", t, val.dump())));
@@ -275,7 +424,6 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 	}
 	if first {
 		if tp != "USER_JOINED\0" { return false }
-		// println!("ducks mutex lock on line {}", std::line!());
 		let mut unducks = ducks.lock().unwrap();
 		let sus = unducks.get_mut(&id).unwrap();
 
@@ -299,28 +447,31 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 		sus.color = color;
 		// sus.in_room = room.to_string();
 		drop(unducks);
-		join_room(room, id, &ducks, &rooms);
+		join_room(room.into(), id, &ducks, &rooms);
 	} else {
 		match tp {
 			"MESSAGE\0" => {
 				let room: String;
+				let nick: String;
+				let col: UserColor;
+				let hip: UserHashedIP;
 				{
 					let mut lel = ducks.lock().unwrap();
 					let lel = lel.get_mut(&id).unwrap();
 					lel.counter.message += 1;
 					if lel.counter.message > MAX_MESSAGE { return false }
 					room = lel.in_room.clone();
+					nick = lel.nick.clone();
+					col = lel.color;
+					hip = lel.haship;
 				}
 				let content = &jv[0];
 				if	jv.len() != 1 ||
 					!content.is_string() {
 					return false;
 				}
-				send_broad(&room, ducks, "MESSAGE".into(), array![{
-					sid: idtostr(id),
-					time: ts,
-					content: content.clone()
-				}]);
+				let content = content.to_string();
+				send_message(room, ducks, rooms, &nick, col, content, id, hip, ts);
 			}
 			"TYPING\0" => {
 				let typing = &jv[0];
@@ -364,7 +515,6 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 					!y.is_number() {
 					return false;
 				}
-				// println!("ducks mutex lock on line {}", std::line!());
 				let bb = ducks.lock().unwrap();
 				let room = bb.get(&id).unwrap().in_room.clone();
 				drop(bb);
@@ -384,19 +534,20 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 				let room: String;
 				let pnick: String;
 				let pcol: UserColor;
+				let hip: UserHashedIP;
 				{
 					let mut lel = ducks.lock().unwrap();
 					let lel = lel.get_mut(&id).unwrap();
 					lel.counter.chnick += 1;
 					if lel.counter.chnick > MAX_CHNICK { return false }
+					hip = lel.haship;
 					room = lel.in_room.clone();
 					pnick = lel.nick.clone();
 					pcol = lel.color;
 					lel.nick = nick.to_string();
 					lel.color = color;
 				}
-				send_broad(&room, ducks, "USER_CHANGE_NICK".into(), array![idtostr(id), [pnick.clone(),u32tocol(pcol)], [nick,u32tocol(color)], ts]);
-				send_broad(&room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &room) ]);
+				send_userchnick(room, &ducks, &rooms, &pnick, pcol, &nick, color, id, hip, ts);
 			}
 			"ROOM\0" => {
 				let room = &jv[0];
@@ -408,10 +559,9 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 				if room == "" {
 					return false;
 				}
-				join_room(room, id, &ducks, &rooms);
+				join_room(room.into(), id, &ducks, &rooms);
 			}
 			_ => {
-				println!("skull emoji");
 				return false;
 			}
 		}
@@ -421,7 +571,6 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 
 fn ducktosl(ducks: &SusMap, room: &str) -> json::JsonValue {
 	let mut arr = array![];
-	// println!("ducks mutex lock on line {}", std::line!());
 	let ducks = ducks.lock().unwrap();
 	for (id, sus) in ducks.iter() {
 		if room != "" && sus.in_room != room { continue }
@@ -438,7 +587,6 @@ fn ducktosl(ducks: &SusMap, room: &str) -> json::JsonValue {
 
 fn ducktotyp(ducks: &SusMap, room: &str) -> json::JsonValue {
 	let mut arr = array![];
-	// println!("ducks mutex lock on line {}", std::line!());
 	let ducks = ducks.lock().unwrap();
 	for (id, sus) in ducks.iter() {
 		if room != "" && sus.in_room != room { continue }
@@ -468,7 +616,21 @@ fn hidtostr(inp: u64) -> String {
 }
 
 fn haship(inp: IpAddr) -> u64 {
-	return 5115;
+	//todo: make it irreversible
+	if let IpAddr::V4(v4) = inp {
+		let oc = v4.octets();
+		return 0x19fa920130b0ba21u64 |
+			(u64::from(oc[0]) * 10495007) |
+			(u64::from(oc[1]) * 39950100);
+	} else if let IpAddr::V6(v6) = inp {
+		let oc = v6.segments();
+		return 0x481040b16b00b135u64 |
+			(u64::from(oc[0]) * 40100233) |
+			(u64::from(oc[1]) * 40100100) |
+			(u64::from(oc[2]) * 49521111);
+	} else {
+		panic!("that's not happening");
+	}
 }
 
 fn get_ts() -> u64 {
