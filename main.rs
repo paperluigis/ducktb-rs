@@ -403,7 +403,9 @@ fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: json::JsonValue) {
 }
 
 fn send_uni(to_id: UserID, ducks: &SusMap, t: String, val: json::JsonValue) {
-	println!("\x1b[34mtx    \x1b[34m[{:0>8x}]\x1b[0m {:?} {}", to_id, t, val.dump());
+	if t != "HISTORY" {
+		println!("\x1b[34mtx    \x1b[34m[{:0>8x}]\x1b[0m {:?} {}", to_id, t, val.dump());
+	}
 	let ducks = ducks.lock().unwrap();
 	// I DON'T FUCKING CARE IF SEND FAILS
 	let _ = ducks.get(&to_id).unwrap().tx.unbounded_send(Message::Text(format!("{}\0{}", t, val.dump())));
