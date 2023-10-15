@@ -13,8 +13,8 @@ use tokio::time::{interval, Duration};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::{spawn, select};
 use tokio_tungstenite::{
-    accept_async,
-    tungstenite::Message,
+    accept_hdr_async,
+    tungstenite::{Message, handshake::server::{Request, Response, ErrorResponse}}
 };
 use random_string::generate;
 use std::collections::{VecDeque, HashMap};
@@ -85,15 +85,19 @@ struct Room {
 	conn_users: u16
 }
 
+// should we trust the X-Forwarded-For header?
+const TRUST_REAL_IP_HEADER: bool = true;
+// what room should we consider the default?
 const LOBBY_ROOM_NAME: &str = "lobby";
+// how many messages should we store in rooms?
 const HIST_ENTRY_MAX: usize = 512;
+// how many events are users allowed to send in a 5-second period?
 const MAX_MOUSE: u8 = 100;
 const MAX_CHNICK: u8 = 1;
 const MAX_MESSAGE: u8 = 5;
 const MAX_TYPING: u8 = 8;
 
 struct SusRate {
-	// all of those reset to 0 every 5 seconds
 	mouse: u8,
 	chnick: u8,
 	message: u8,
@@ -110,13 +114,10 @@ struct Susser {
 	tx: UnboundedSender<Message>
 }
 
-const CS_HEX: &str = "0123456789abcdef";
-
-
 #[tokio::main]
 async fn main() {
 	let wtf = env::var("BIND").unwrap_or("127.0.0.1:8000".into());
-	let abbi: String = generate(16, CS_HEX);
+	let abbi: String = generate(16, "0123456789abcdef");
 	let que = TcpListener::bind(&wtf).await.expect("DANG IT");
 	let rf = que.as_raw_fd();
 	setsockopt(rf, sockopt::ReuseAddr, &true).ok();
@@ -132,15 +133,31 @@ async fn main() {
 
 async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: String) {
 	let addr = s.peer_addr().expect("what da hell man");
-	println!("\x1b[33mconn+ \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, addr);
-	let bs = accept_async(s).await;
+	let mut uip = addr.ip();
+	let headcb = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
+		for (k, v) in req.headers().iter() {
+			if k == "x-forwarded-for" && TRUST_REAL_IP_HEADER {
+				let str = v.to_str().ok();
+				if let Some(str) = str {
+					let str = str.split(',').next_back().unwrap_or("");
+					if let Some(ip) = str.parse().ok() {
+						uip = ip;
+					}
+				}
+			}
+		}
+		return Result::Ok(resp);
+	};
+	let bs = accept_hdr_async(s, headcb).await;
+	println!("\x1b[33mconn+ \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, uip);
 	if !bs.is_ok() {
 		println!("...nevermind that");
 		return;
 	}
+	let bs = bs.unwrap();
 	let (tx, mut rx) = unbounded();
 
-	let (mut tws, mut rws) = bs.unwrap().split();
+	let (mut tws, mut rws) = bs.split();
 
 	let sus = Susser {
 		counter: SusRate { message: 0, chnick: 0, mouse: 0, typing: 0 },
@@ -148,7 +165,7 @@ async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: Str
 		color: 0,
 		nick: "".to_string(),
 		in_room: "".to_string(),
-		haship: haship(addr.ip()),
+		haship: haship(uip),
 		tx: tx,
 	};
 	let mut msg_1st = true;
