@@ -32,6 +32,8 @@ type UserID = u32;
 type RoomID = String;
 type UserHashedIP = u64;
 
+type RoomHandle = u16;
+
 type SusMap = Arc<Mutex<HashMap<UserID, Susser>>>;
 type SusRoom = Arc<Mutex<HashMap<RoomID, Room>>>;
 
@@ -107,7 +109,7 @@ struct SusRate {
 struct Susser {
 	counter: SusRate,
 	is_typing: bool,
-	in_room: RoomID,
+	in_room: Vec<RoomID>,
 	nick: UserNick,
 	color: UserColor,
 	haship: UserHashedIP,
@@ -164,7 +166,7 @@ async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: Str
 		is_typing: false,
 		color: 0,
 		nick: "".to_string(),
-		in_room: "".to_string(),
+		in_room: Vec::new(),
 		haship: haship(uip),
 		tx: tx,
 	};
@@ -217,24 +219,32 @@ async fn conn(s: TcpStream, seq: UserID, ducks: SusMap, rooms: SusRoom, srv: Str
 	// we do NOT give a fuck if close() fails
 	// (if it does the underlying connection is probably severed anyway)
 	let _ = tws.close().await;
-    println!("\x1b[31mconn- \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, addr);
+    println!("\x1b[31mconn- \x1b[34m[{:0>8x}|{:?}]\x1b[0m", seq, uip);
 
-	leave_room(seq, &ducks, &rooms);
+	leave_all_rooms(seq, &ducks, &rooms);
 	let mut dorks = ducks.lock().unwrap();
 	//let duck = dorks.get_mut(&seq).unwrap();
 	dorks.remove(&seq);
 	//drop(dorks);
 }
 
-fn leave_room(id: UserID, ducks: &SusMap, rooms: &SusRoom) {
+fn leave_all_rooms(id: UserID, ducks: &SusMap, rooms: &SusRoom) {
+	let len = {
+		let mut lurks = ducks.lock().unwrap();
+		let x = lurks.get(&id).unwrap();
+		x.in_room.len()
+	};
+	for i in 0..len { leave_room(i, id, ducks, rooms) }
+}
+
+fn leave_room(h: RoomHandle, id: UserID, ducks: &SusMap, rooms: &SusRoom) {
 	let mut lurks = ducks.lock().unwrap();
-	let x = lurks.get_mut(&id).unwrap();
+	let mut x = lurks.get_mut(&id).unwrap();
 	let nick = x.nick.clone();
 	let col = x.color;
 	let hip = x.haship;
-	let room = x.in_room.clone();
-	if room == "" { return }
-	x.in_room = "".to_string();
+	let mut vents = x.in_room;
+	let room = x.in_room.swap_remove(h);
 	drop(lurks);
 	let ts = get_ts();
 	send_userleave(room.clone(), &ducks, &rooms, &nick, col, id, hip, ts);
@@ -246,7 +256,7 @@ fn leave_room(id: UserID, ducks: &SusMap, rooms: &SusRoom) {
 	rooks.remove(&room);
 }
 
-fn join_room(room: RoomID, id: UserID, ducks: &SusMap, rooms: &SusRoom) {
+fn join_room(room: RoomID, id: UserID, ducks: &SusMap, rooms: &SusRoom) -> RoomHandle {
 	let room = room.to_string();
 	let mut lurks = ducks.lock().unwrap();
 	let x = lurks.get_mut(&id).unwrap();
@@ -447,7 +457,7 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 		let mut unducks = ducks.lock().unwrap();
 		let sus = unducks.get_mut(&id).unwrap();
 
-		if sus.in_room != "" { return false }
+		if sus.in_room.len() != 0 { return false }
 		let nick = &jv[0];
 		let color = &jv[1];
 		let room = &jv[2];
@@ -475,6 +485,13 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 				let nick: String;
 				let col: UserColor;
 				let hip: UserHashedIP;
+				let room_h = &jv[0];
+				let content = &jv[1];
+				if	jv.len() != 2 ||
+					!content.is_string() {
+					return false;
+				}
+				let content = content.to_string();
 				{
 					let mut lel = ducks.lock().unwrap();
 					let lel = lel.get_mut(&id).unwrap();
@@ -485,12 +502,6 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 					col = lel.color;
 					hip = lel.haship;
 				}
-				let content = &jv[0];
-				if	jv.len() != 1 ||
-					!content.is_string() {
-					return false;
-				}
-				let content = content.to_string();
 				send_message(room, ducks, rooms, &nick, col, content, id, hip, ts);
 			}
 			"TYPING\0" => {
