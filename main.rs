@@ -8,7 +8,8 @@ extern crate serde;
 extern crate serde_json;
 
 use derive_more::{Display, Deref, From};
-use serde::{Deserialize, Serialize};
+use serde::{Deserializer, Serializer, Deserialize, Serialize};
+use serde::de::Error;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{channel, Sender};
 use futures_util::{SinkExt, StreamExt};
@@ -30,14 +31,64 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(PartialEq, Debug, Display, Deref, Serialize, Deserialize, From)]
 struct UserNick(String);
 // format is 0rgb
-#[derive(PartialEq, Debug, Deref, Serialize, Deserialize, From)]
+#[derive(Clone, Copy, PartialEq, Debug, Deref, From)]
 struct UserColor(u32);
-#[derive(PartialEq, Debug, Deref, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Deref)]
 struct UserID(u32);
 #[derive(PartialEq, Debug, Display, Deref, Serialize, Deserialize, From)]
 struct RoomID(String);
-#[derive(PartialEq, Debug, Deref, Serialize, Deserialize, From)]
+#[derive(Clone, Copy, PartialEq, Debug, Deref, From)]
 struct UserHashedIP(u64);
+
+impl Serialize for UserID {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		serializer.serialize_str(&self.to_string())
+	}
+}
+impl Serialize for UserColor {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		serializer.serialize_str(&self.to_string())
+	}
+}
+impl Serialize for UserHashedIP {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		serializer.serialize_str(&self.to_string())
+	}
+}
+impl<'de> Deserialize<'de> for UserID {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+		if deserializer.is_human_readable() {
+			let s = String::deserialize(deserializer)?;
+			Self::from_str(&s).map_err(D::Error::custom)
+		} else {
+			let b = u32::deserialize(deserializer)?;
+			Ok(Self(b))
+		}
+	}
+}
+impl<'de> Deserialize<'de> for UserColor {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+		if deserializer.is_human_readable() {
+			let s = String::deserialize(deserializer)?;
+			Self::from_str(&s).map_err(D::Error::custom)
+			//Self::from_str(&s).map_err(|_| Deserializer::Error)?
+		} else {
+			let b = u32::deserialize(deserializer)?;
+			if b > 0xffffff { return Err(D::Error::custom("that ain't a valid 0rgb 32-bit color")) };
+			Ok(Self(b))
+		}
+	}
+}
+/*impl Deserialize<'de> for UserHashedIP {
+	fn deserialize<D>(&self, deserializer: D) -> Result<Self, D::Error> where D: Deserializer {
+		Ok(Self(if d.is_human_readable() {
+			let s = String::deserialize(deserializer)?;
+			u64::from_str(s)?
+		} else {
+			u64::deserialize(deserializer)?
+		}))
+	}
+}*/
 
 impl fmt::Display for UserColor {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -56,7 +107,22 @@ impl fmt::Display for UserHashedIP {
 }
 
 struct SillyParsingError;
+impl fmt::Display for SillyParsingError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "The client got too silly.")
+	}
+}
 
+impl FromStr for UserID {
+	type Err = SillyParsingError;
+	fn from_str(inp: &str) -> Result<Self, Self::Err> {
+		if inp.len() == 8 {
+			return Ok(UserID(u32::from_str_radix(&inp, 16).map_err(|_| SillyParsingError)?));
+		} else {
+			return Err(SillyParsingError);
+		}
+	}
+}
 impl FromStr for UserColor {
 	type Err = SillyParsingError;
 	fn from_str(inp: &str) -> Result<Self, Self::Err> {
@@ -150,6 +216,7 @@ struct Susser {
 	nick: UserNick,
 	color: UserColor,
 	haship: UserHashedIP,
+	ip: IpAddr,
 	tx: Sender<Message>
 }
 
@@ -168,7 +235,7 @@ struct C2SMouse(f32, f32);
 
 #[derive(Debug)]
 enum ClientOp {
-	Connection(Susser),
+	Connection(UserID, Susser),
 	Disconnect(UserID),
 	Duck(u32),
 	MsgUserJoined(C2SUserJoined),
@@ -193,6 +260,12 @@ async fn main() {
 	let jh = spawn(listen(que, tx_msg));
 	while let Some(i) = messages.recv().await {
 		println!("uhh {:?}", i);
+		match i {
+			ClientOp::Connection(uid, sus) => {
+				
+			},
+			_ => () // todo
+		}
 	}
 	jh.await;
 }
@@ -200,7 +273,7 @@ async fn main() {
 async fn listen(l: TcpListener, t: Sender<ClientOp>) {
 	let mut conn_seq: UserID = UserID(0x48aeb931);
 	while let Ok((flow, _)) = l.accept().await {
-		spawn(wrap_conn(flow, UserID(conn_seq.clone()), t.clone()));
+		spawn(wrap_conn(flow, conn_seq, t.clone()));
 		conn_seq.0 += 1984;
 	}
 }
@@ -239,10 +312,11 @@ async fn conn(y: TcpStream, ee: UserID, t: &Sender<ClientOp>) {
 		nick: UserNick("".into()),
 		in_room: RoomID("".into()),
 		haship: hash_ip(&uip),
+		ip: uip,
 		tx: tx,
 	};
 	let mut msg_1st = true;
-	if t.send(ClientOp::Connection(sus)).await.is_err() { return };
+	if t.send(ClientOp::Connection(ee, sus)).await.is_err() { return };
 	println!("\x1b[33mconn+ \x1b[34m[{}|{:?}]\x1b[0m", ee, uip);
 	loop {
 		select!{
@@ -273,7 +347,14 @@ async fn message(str: String, uid: &UserID, ts: u64, t: &Sender<ClientOp>, first
 	}
 	let (tp, rr) = str.split_at(f.unwrap() + 1);
 	let (tp, _) = tp.split_at(tp.len() - 1);
-	println!("\x1b[32mrx    \x1b[34m[{}]\x1b[0m {:?} {}", uid, tp, rr);
+	if first {
+		if tp != "USER_JOINED" { return false }
+		let s = serde_json::from_str::<C2SUserJoined>(&rr);
+		if s.is_err() { return false }
+		if t.send(ClientOp::MsgUserJoined(s.unwrap())).await.is_err() { return false };
+	} else {
+		// we do nothing
+	}
 	true
 }
 
