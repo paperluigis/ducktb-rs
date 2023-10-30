@@ -333,7 +333,6 @@ async fn main() {
 	let mut rooms = SusRoom::new();
 	let jh = spawn(listen(que, tx_msg));
 	while let Some(i) = messages.recv().await {
-		println!("uhh {:?}", i);
 		match i {
 			ClientOp::Connection(uid, balls) => {
 				println!("\x1b[33mconn+ \x1b[34m[{}|{:?}]\x1b[0m", uid, balls.ip);
@@ -486,7 +485,6 @@ async fn conn(y: TcpStream, ee: UserID, t: &Sender<ClientOp>) {
 		select!{
 			msg = messages.recv() => {
 				if let Some(msg) = msg {
-					println!("hhu {:?}", msg);
 					if tws.send(Message::Text(match msg {
 						ServerOp::Disconnect => break,
 						ServerOp::MsgHello(s) =>      format!("HELLO\0{}",       serde_json::to_string(&s).unwrap()),
