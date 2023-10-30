@@ -1,79 +1,101 @@
-extern crate nix;
-extern crate derive_more;
-extern crate random_string;
-extern crate futures_channel;
-extern crate futures_util;
-extern crate tokio;
-extern crate serde;
-extern crate serde_json;
+// what should we send as the "server" field in the hello message?
+const HELLO_IDENTITY: &str = "never liked ur smile brah";
+// should we trust the X-Forwarded-For header?
+const TRUST_REAL_IP_HEADER: bool = true;
+// what room should we consider the default?
+const LOBBY_ROOM_NAME: &str = "lobby";
+// what rooms should we keep in memory even if there aren't any users in them?
+const KEEP_ROOMS: [&'static str; 2] = ["lobby", "duck-room"];
+// how many messages should we store in rooms?
+const HIST_ENTRY_MAX: usize = 512;
+// how many events are users allowed to send in a 5-second period?
+const MAX_MOUSE: u8 = 100;
+const MAX_CHNICK: u8 = 1;
+const MAX_MESSAGE: u8 = 5;
+const MAX_TYPING: u8 = 8;
 
 use derive_more::{Display, Deref, From};
-use serde::{Deserializer, Serializer, Deserialize, Serialize};
-use serde::de::Error;
-use serde_json::{Value, json};
-use tokio::sync::mpsc::{channel, Sender};
+use derive_new::new;
+use futures::future::join_all;
 use futures_util::{SinkExt, StreamExt};
 use nix::sys::socket::{setsockopt, sockopt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::{task::spawn, select};
-use tokio_tungstenite::{
-    accept_hdr_async,
-    tungstenite::{Message, handshake::server::{Request, Response, ErrorResponse}}
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{json, Value};
+use std::{
+	os::fd::AsRawFd,
+	env, fmt, str::FromStr,
+	collections::{VecDeque, HashMap},
+	net::IpAddr,
+	time::{SystemTime, UNIX_EPOCH}
 };
-use random_string::generate;
-use std::collections::{VecDeque, HashMap};
-use std::{fmt, env};
-use std::str::FromStr;
-use std::net::IpAddr;
-use std::os::unix::io::AsRawFd;
-use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::{
+	net::{TcpListener, TcpStream},
+	sync::mpsc::{channel, Sender},
+	spawn, select
+};
+use tokio_tungstenite::{
+	accept_hdr_async,
+	tungstenite::{Message, handshake::server::{Request, Response, ErrorResponse}}
+};
 
-#[derive(PartialEq, Debug, Display, Deref, Serialize, Deserialize, From)]
+#[derive(PartialEq, Clone, Debug, Display, Deref, Serialize, Deserialize, From)]
 struct UserNick(String);
 // format is 0rgb
 #[derive(Clone, Copy, PartialEq, Debug, Deref, From)]
 struct UserColor(u32);
-#[derive(Clone, Copy, PartialEq, Debug, Deref)]
+#[derive(Hash, Eq, Clone, Copy, PartialEq, Debug, Deref)]
 struct UserID(u32);
-#[derive(PartialEq, Debug, Display, Deref, Serialize, Deserialize, From)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug, Display, Deref, Serialize, Deserialize, From)]
 struct RoomID(String);
 #[derive(Clone, Copy, PartialEq, Debug, Deref, From)]
 struct UserHashedIP(u64);
 
 impl Serialize for UserID {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-		serializer.serialize_str(&self.to_string())
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		if s.is_human_readable() {
+			s.serialize_str(&self.to_string())
+		} else {
+			s.serialize_u32(self.0)
+		}
 	}
 }
 impl Serialize for UserColor {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-		serializer.serialize_str(&self.to_string())
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		if s.is_human_readable() {
+			s.serialize_str(&self.to_string())
+		} else {
+			s.serialize_u32(self.0)
+		}
 	}
 }
 impl Serialize for UserHashedIP {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-		serializer.serialize_str(&self.to_string())
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		if s.is_human_readable() {
+			s.serialize_str(&self.to_string())
+		} else {
+			s.serialize_u64(self.0)
+		}
 	}
 }
 impl<'de> Deserialize<'de> for UserID {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-		if deserializer.is_human_readable() {
-			let s = String::deserialize(deserializer)?;
+	fn deserialize<D>(d: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+		if d.is_human_readable() {
+			let s = String::deserialize(d)?;
 			Self::from_str(&s).map_err(D::Error::custom)
 		} else {
-			let b = u32::deserialize(deserializer)?;
+			let b = u32::deserialize(d)?;
 			Ok(Self(b))
 		}
 	}
 }
 impl<'de> Deserialize<'de> for UserColor {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-		if deserializer.is_human_readable() {
-			let s = String::deserialize(deserializer)?;
+	fn deserialize<D>(d: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+		if d.is_human_readable() {
+			let s = String::deserialize(d)?;
 			Self::from_str(&s).map_err(D::Error::custom)
 			//Self::from_str(&s).map_err(|_| Deserializer::Error)?
 		} else {
-			let b = u32::deserialize(deserializer)?;
+			let b = u32::deserialize(d)?;
 			if b > 0xffffff { return Err(D::Error::custom("that ain't a valid 0rgb 32-bit color")) };
 			Ok(Self(b))
 		}
@@ -181,95 +203,235 @@ enum HistEntry {
 	ChNick(HistChNick)
 }
 
-#[derive(Debug)]
+
+#[derive(Debug, new)]
 struct Room {
+	#[new(default)]
 	hist: VecDeque<HistEntry>,
-	// refcounting
-	conn_users: u16
+	id: RoomID,
+	#[new(default)]
+	users: Vec<UserID>
 }
 
-// should we trust the X-Forwarded-For header?
-const TRUST_REAL_IP_HEADER: bool = true;
-// what room should we consider the default?
-const LOBBY_ROOM_NAME: &str = "lobby";
-// how many messages should we store in rooms?
-const HIST_ENTRY_MAX: usize = 512;
-// how many events are users allowed to send in a 5-second period?
-const MAX_MOUSE: u8 = 100;
-const MAX_CHNICK: u8 = 1;
-const MAX_MESSAGE: u8 = 5;
-const MAX_TYPING: u8 = 8;
-
-#[derive(Debug)]
+#[derive(Debug, Clone, new)]
 struct SusRate {
+	#[new(value="0")]
 	mouse: u8,
+	#[new(value="0")]
 	chnick: u8,
+	#[new(value="0")]
 	message: u8,
+	#[new(value="0")]
 	typing: u8
 }
 
 #[derive(Debug)]
 struct Susser {
+	// internal fields
 	counter: SusRate,
-	is_typing: bool,
-	in_room: RoomID,
-	nick: UserNick,
-	color: UserColor,
-	haship: UserHashedIP,
 	ip: IpAddr,
-	tx: Sender<Message>
+	tx: Sender<ServerOp>,
+	is_typing: bool,
+	rooms: Vec<RoomID>,
+
+	u: User
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct User {
+	#[serde(rename="sid")]
+	id: UserID,
+	nick: UserNick,
+	color: UserColor,
+	#[serde(rename="home")]
+	haship: UserHashedIP
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TextMessage {
+	time: u64,
+	sid: UserID,
+	content: String
+}
+
+// `, #[serde(skip)] ()` is a workaround to treat a newtype struct as a tuple with one element
+// this is done for consistency with all other messages
 #[derive(Debug, Deserialize)]
-struct C2SUserJoined(UserNick, UserColor, Option<String>);
+struct C2SUserJoined(UserNick, UserColor, RoomID);
 #[derive(Debug, Deserialize)]
 struct C2SUserChNick(UserNick, UserColor);
 #[derive(Debug, Deserialize)]
-struct C2SRoom(RoomID);
+struct C2SRoom(RoomID, #[serde(skip)] ());
 #[derive(Debug, Deserialize)]
-struct C2SMessage(String);
+struct C2SMessage(String, #[serde(skip)] ());
 #[derive(Debug, Deserialize)]
-struct C2STyping(bool);
+struct C2STyping(bool, #[serde(skip)] ());
 #[derive(Debug, Deserialize)]
 struct C2SMouse(f32, f32);
 
+#[derive(Debug, Clone, Serialize)]
+struct S2CHello(String, UserID);
+#[derive(Debug, Clone, Serialize)]
+struct S2CRoom(RoomID, #[serde(skip)] ());
+//#[derive(Debug, Clone, Serialize)]
+//struct S2CHistory(VecDeque<HistEntry>);
+#[derive(Debug, Clone, Serialize)]
+struct S2CUserJoined(User, u64);
+#[derive(Debug, Clone, Serialize)]
+struct S2CUserLeft(UserID, u64);
+#[derive(Debug, Clone, Serialize)]
+struct S2CMouse(UserID, f32, f32);
+#[derive(Debug, Clone, Serialize)]
+struct S2CUserUpdate(Vec<User>, #[serde(skip)] ());
+#[derive(Debug, Clone, Serialize)]
+struct S2CTyping(Vec<UserID>, #[serde(skip)] ());
+#[derive(Debug, Clone, Serialize)]
+struct S2CMessage(TextMessage, #[serde(skip)] ());
+
 #[derive(Debug)]
 enum ClientOp {
+	// duck
+	Duck(u32),
+	// client connection states
 	Connection(UserID, Susser),
 	Disconnect(UserID),
-	Duck(u32),
-	MsgUserJoined(C2SUserJoined),
-	MsgUserChNick(C2SUserChNick),
-	MsgRoom(C2SRoom),
-	MsgMessage(C2SMessage),
-	MsgTyping(C2STyping),
-	MsgMouse(C2SMouse)
+	// client messages
+	MsgUserJoined(UserID, C2SUserJoined),
+	MsgUserChNick(UserID, C2SUserChNick),
+	MsgRoom(UserID, C2SRoom),
+	MsgMessage(UserID, C2SMessage),
+	MsgTyping(UserID, C2STyping),
+	MsgMouse(UserID, C2SMouse)
 }
 
+#[derive(Debug, Clone)]
+enum ServerOp {
+	// server be like "you should kill yourself NOW"
+	Disconnect,
+	// server messages
+	MsgHello(S2CHello),
+	MsgRoom(S2CRoom),
+	//MsgHistory(S2CHistory),
+	MsgUserJoined(S2CUserJoined),
+	MsgUserLeft(S2CUserLeft),
+	MsgMouse(S2CMouse),
+	MsgUserUpdate(S2CUserUpdate),
+	MsgTyping(S2CTyping),
+	MsgMessage(S2CMessage)
+}
+
+// ========== logic handling side ==========
 #[tokio::main]
 async fn main() {
 	let wtf = env::var("BIND").unwrap_or("127.0.0.1:8000".into());
-	let abbi: String = generate(16, "9a03f1842567bced");
 	let que = TcpListener::bind(&wtf).await.expect("DANG IT");
 	let rf = que.as_raw_fd();
 	setsockopt(rf, sockopt::ReuseAddr, &true).ok();
-	println!("pls work :skull: (listening on {}), server string '{}'", wtf, abbi);
+	println!("pls work :skull: (listening on {})", wtf);
 	let (tx_msg, mut messages) = channel(8);
-	let ducks = SusMap::new();
-	let rooms = SusRoom::new();
+	let mut ducks = SusMap::new();
+	let mut rooms = SusRoom::new();
 	let jh = spawn(listen(que, tx_msg));
 	while let Some(i) = messages.recv().await {
 		println!("uhh {:?}", i);
 		match i {
-			ClientOp::Connection(uid, sus) => {
-				
+			ClientOp::Connection(uid, balls) => {
+				println!("\x1b[33mconn+ \x1b[34m[{}|{:?}]\x1b[0m", uid, balls.ip);
+				if balls.tx.send(ServerOp::MsgHello(S2CHello(HELLO_IDENTITY.into(), uid))).await.is_err() { break }
+				ducks.insert(uid, balls);
 			},
-			_ => () // todo
+			ClientOp::Disconnect(uid) => {
+			    println!("\x1b[31mconn- \x1b[34m[{}]\x1b[0m", uid);
+				let balls = ducks.get(&uid).unwrap();
+				for rid in balls.rooms.clone() { leave_room(uid, rid.clone(), &mut ducks, &mut rooms).await; }
+				ducks.remove(&uid);
+			},
+			ClientOp::MsgUserJoined(uid, duck) => {
+				let mf = ducks.get_mut(&uid).expect("nope");
+				// TODO: validate
+				mf.u.nick = duck.0;
+				mf.u.color = duck.1;
+				join_room(uid, duck.2, &mut ducks, &mut rooms).await;
+			},
+			ClientOp::MsgMouse(uid, duck) => {
+				let mf = ducks.get(&uid).expect("nope");
+				let rf = rooms.get(&mf.rooms[0]).expect("no way");
+				send_broad(rf, ServerOp::MsgMouse(S2CMouse(uid, duck.0, duck.1)), &ducks).await;
+			},
+			ClientOp::MsgTyping(uid, duck) => {
+				let mf = ducks.get_mut(&uid).expect("nope");
+				let rf = rooms.get(&mf.rooms[0]).expect("no way");
+				if mf.is_typing == duck.0 { continue }
+				mf.is_typing = duck.0;
+				send_broad(rf, ServerOp::MsgTyping(S2CTyping(
+					rf.users.iter().filter(|p| ducks.get(p).unwrap().is_typing).map(|i| i.clone()).collect(), ()
+				)), &ducks).await;
+			},
+			ClientOp::MsgRoom(uid, duck) => {
+				// TODO: validate
+				let mf = ducks.get(&uid).expect("nope");
+				leave_room(uid, mf.rooms[0].clone(), &mut ducks, &mut rooms).await;
+				join_room(uid, duck.0, &mut ducks, &mut rooms).await;
+			},
+			ClientOp::MsgMessage(uid, duck) => {
+				// TODO: validate
+				let mf = ducks.get_mut(&uid).expect("nope");
+				let rf = rooms.get(&mf.rooms[0]).expect("no way");
+				send_broad(rf, ServerOp::MsgMessage(S2CMessage(TextMessage { time: timestamp(), sid: uid, content: duck.0 }, ())), &ducks).await;
+			},
+			ClientOp::MsgUserChNick(uid, duck) => {}
+			ClientOp::Duck(i) => {}
 		}
 	}
-	jh.await;
+	let _ = jh.await;
 }
 
+async fn join_room(balls: UserID, joins: RoomID, with_da: &mut SusMap, in_the: &mut SusRoom) -> usize {
+	let duck = with_da.get_mut(&balls).expect("how did we get here?");
+	let mut room = match in_the.get_mut(&joins) {
+		None => {
+			let room = Room::new(joins.clone());
+			in_the.insert(joins.clone(), room);
+			in_the.get_mut(&joins)
+		}
+		a => a,
+	}.unwrap();
+	room.users.push(balls);
+	duck.rooms.push(room.id.clone());
+	let r = duck.rooms.len();
+	send_uni(duck, ServerOp::MsgRoom(S2CRoom(joins.clone(), ()))).await;
+	send_broad(room, ServerOp::MsgUserJoined(S2CUserJoined(duck.u.clone(), timestamp())), with_da).await;
+	send_broad(room, ServerOp::MsgUserUpdate(S2CUserUpdate(
+		room.users.iter().map(|p| with_da.get(p).unwrap().u.clone()).collect(), ()
+	)), with_da).await;
+	// send_uni history
+	r
+}
+async fn leave_room(balls: UserID, leaves: RoomID, with_da: &mut SusMap, in_the: &mut SusRoom) -> usize {
+	let duck = with_da.get_mut(&balls).expect("how did we get here?");
+	let mut room = in_the.get_mut(&leaves).expect("i'm not even in the room");
+	let idx = room.users.iter().position(|r| r==&balls);
+	if let Some(idx) = idx { room.users.swap_remove(idx); }
+	let idx = duck.rooms.iter().position(|r| r==&leaves);
+	if let Some(idx) = idx { duck.rooms.swap_remove(idx); }
+	let r = duck.rooms.len();
+	send_broad(room, ServerOp::MsgUserLeft(S2CUserLeft(balls, timestamp())), with_da).await;
+	send_broad(room, ServerOp::MsgUserUpdate(S2CUserUpdate(
+		room.users.iter().map(|p| with_da.get(p).unwrap().u.clone()).collect(), ()
+	)), with_da).await;
+	// TODO: remove room from memory if r == 0
+	r
+}
+
+async fn send_uni(to: &Susser, c: ServerOp) {
+	let _ = to.tx.send(c).await;
+}
+async fn send_broad(to: &Room, c: ServerOp, ducks: &SusMap) {
+	join_all(to.users.iter().map(|id| send_uni(ducks.get(id).unwrap(), c.clone()))).await;
+}
+
+
+// ========== connection handling side ==========
 async fn listen(l: TcpListener, t: Sender<ClientOp>) {
 	let mut conn_seq: UserID = UserID(0x48aeb931);
 	while let Ok((flow, _)) = l.accept().await {
@@ -305,30 +467,43 @@ async fn conn(y: TcpStream, ee: UserID, t: &Sender<ClientOp>) {
 	let (mut tws, mut rws) = bs.split();
 
 	let (tx, mut messages) = channel(48);
-	let sus = Susser {
-		counter: SusRate { message: 0, chnick: 0, mouse: 0, typing: 0 },
+	let balls = Susser {
+		counter: SusRate::new(),
 		is_typing: false,
-		color: UserColor(0),
-		nick: UserNick("".into()),
-		in_room: RoomID("".into()),
-		haship: hash_ip(&uip),
+		u: User {
+			color: UserColor(0),
+			nick: UserNick("".into()),
+			haship: hash_ip(&uip),
+			id: ee
+		},
+		rooms: vec![],
 		ip: uip,
 		tx: tx,
 	};
 	let mut msg_1st = true;
-	if t.send(ClientOp::Connection(ee, sus)).await.is_err() { return };
-	println!("\x1b[33mconn+ \x1b[34m[{}|{:?}]\x1b[0m", ee, uip);
+	if t.send(ClientOp::Connection(ee, balls)).await.is_err() { return };
 	loop {
 		select!{
 			msg = messages.recv() => {
 				if let Some(msg) = msg {
-					if tws.send(msg).await.is_err() { break }
+					println!("hhu {:?}", msg);
+					if tws.send(Message::Text(match msg {
+						ServerOp::Disconnect => break,
+						ServerOp::MsgHello(s) =>      format!("HELLO\0{}",       serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgMouse(s) =>      format!("MOUSE\0{}",       serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgRoom(s) =>       format!("ROOM\0{}",        serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgUserUpdate(s) => format!("USER_UPDATE\0{}", serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgUserJoined(s) => format!("USER_JOINED\0{}", serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgUserLeft(s) =>   format!("USER_LEFT\0{}",   serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgTyping(s) =>     format!("TYPING\0{}",      serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgMessage(s) =>    format!("MESSAGE\0{}",     serde_json::to_string(&s).unwrap()),
+					})).await.is_err() { break }
 				}
 			}
 			msg = rws.next() => {
 				match msg {
 					Some(Ok(Message::Text(str))) => {
-						if !message(str, &ee, timestamp(), t, msg_1st).await { break }
+						if message(str, ee, t, msg_1st).await.is_none() { break }
 					}
 					_ => break
 				}
@@ -336,26 +511,28 @@ async fn conn(y: TcpStream, ee: UserID, t: &Sender<ClientOp>) {
 			}
 		}
 	}
-    println!("\x1b[31mconn- \x1b[34m[{}|{:?}]\x1b[0m", ee, uip);
 	let _ = t.send(ClientOp::Disconnect(ee)).await;
 }
 
-async fn message(str: String, uid: &UserID, ts: u64, t: &Sender<ClientOp>, first: bool) -> bool {
-	let f = str.find("\0");
-	if f.is_none() {
-		return false;
-	}
-	let (tp, rr) = str.split_at(f.unwrap() + 1);
+async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) -> Option<()> {
+	let f = str.find("\0")?;
+	let (tp, rr) = str.split_at(f + 1);
 	let (tp, _) = tp.split_at(tp.len() - 1);
 	if first {
-		if tp != "USER_JOINED" { return false }
-		let s = serde_json::from_str::<C2SUserJoined>(&rr);
-		if s.is_err() { return false }
-		if t.send(ClientOp::MsgUserJoined(s.unwrap())).await.is_err() { return false };
+		if tp != "USER_JOINED" { return None }
+		let s = serde_json::from_str::<C2SUserJoined>(&rr).ok()?;
+		t.send(ClientOp::MsgUserJoined(uid, s)).await.ok()?;
 	} else {
-		// we do nothing
+		t.send(match tp {
+			"MOUSE"       => ClientOp::MsgMouse  (uid, serde_json::from_str::<C2SMouse>(&rr).ok()?),
+			"TYPING"      => ClientOp::MsgTyping (uid, serde_json::from_str::<C2STyping>(&rr).ok()?),
+			"MESSAGE"     => ClientOp::MsgMessage(uid, serde_json::from_str::<C2SMessage>(&rr).ok()?),
+			"ROOM"        => ClientOp::MsgRoom   (uid, serde_json::from_str::<C2SRoom>(&rr).ok()?),
+			//"" => ClientOp::Msg(uid, serde_json::from_str::<C2S>(&rr).ok()?),
+			_ => { println!("received {}, which is unimplemented...", tp); return None }
+		}).await.ok()?;
 	}
-	true
+	Some(())
 }
 
 /*
@@ -520,9 +697,9 @@ fn send_broad(to_room: &str, ducks: &SusMap, t: String, val: Value) {
 	}
 	let ducks = ducks.lock().unwrap();
 	println!("ducks mutex lock line {}", std::line!());
-	for (_, sus) in ducks.iter() {
-		if to_room != "" && sus.in_room != to_room { continue }
-		let _ = sus.tx.unbounded_send(Message::Text(format!("{}\0{}", t, val.dump())));
+	for (_, balls) in ducks.iter() {
+		if to_room != "" && balls.in_room != to_room { continue }
+		let _ = balls.tx.unbounded_send(Message::Text(format!("{}\0{}", t, val.dump())));
 	}
 }
 
@@ -554,9 +731,9 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 		if tp != "USER_JOINED\0" { return false }
 		let mut unducks = ducks.lock().unwrap();
 	println!("ducks mutex lock line {}", std::line!());
-		let sus = unducks.get_mut(&id).unwrap();
+		let balls = unducks.get_mut(&id).unwrap();
 
-		if sus.in_room != "" { return false }
+		if balls.in_room != "" { return false }
 		let nick = &jv[0];
 		let color = &jv[1];
 		let room = &jv[2];
@@ -572,9 +749,9 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 		let room = room.as_str().unwrap_or(LOBBY_ROOM_NAME).trim();
 		if	nick == "" ||
 			room == "" { return false }
-		sus.nick = nick.to_string();
-		sus.color = color;
-		// sus.in_room = room.to_string();
+		balls.nick = nick.to_string();
+		balls.color = color;
+		// balls.in_room = room.to_string();
 		drop(unducks);
 		join_room(room.into(), id, &ducks, &rooms);
 	} else {
@@ -704,20 +881,22 @@ async fn message(str: String, id: UserID, ducks: &SusMap, rooms: &SusRoom, ts: u
 }
 */
 
+/*
 fn list_to_json(ducks: &SusMap, room: &RoomID) -> Value {
 	let mut arr: Vec<Value> = Vec::with_capacity(ducks.len());
-	for (id, sus) in ducks.iter() {
-		if room.0 != "" && &sus.in_room != room { continue }
+	for (id, balls) in ducks.iter() {
+		if room.0 != "" && &balls.in_room != room { continue }
 		let o = json!({
 			"sid": id.to_string(),
-			"nick": sus.nick.0.clone(),
-			"color": sus.color.to_string(),
-			"home": sus.haship.to_string()
+			"nick": balls.nick.0.clone(),
+			"color": balls.color.to_string(),
+			"home": balls.haship.to_string()
 		});
 		arr.push(o);
 	}
 	return Value::Array(arr);
 }
+*/
 
 fn hist_to_json(v: &VecDeque<HistEntry>) -> Value {
 	let mut a: Vec<Value> = Vec::with_capacity(v.len());
@@ -759,18 +938,6 @@ fn hist_to_json(v: &VecDeque<HistEntry>) -> Value {
 		});
 	}
 	return Value::Array(a);
-}
-
-fn list_to_typing(ducks: &SusMap, room: &RoomID) -> Value {
-	let mut arr: Vec<Value> = vec![];
-	println!("ducks mutex lock line {}", std::line!());
-	for (id, sus) in ducks.iter() {
-		if room.0 != "" && sus.in_room != *room { continue }
-		if sus.is_typing {
-			arr.push(Value::String(id.to_string()));
-		}
-	}
-	return Value::Array(arr);
 }
 
 fn hash_ip(inp: &IpAddr) -> UserHashedIP {
