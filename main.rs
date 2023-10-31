@@ -159,7 +159,7 @@ impl FromStr for UserColor {
 type SusMap = HashMap<UserID, Susser>;
 type SusRoom = HashMap<RoomID, Room>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 struct HistMsg {
 	home: UserHashedIP,
 	sid: UserID,
@@ -168,7 +168,7 @@ struct HistMsg {
 	color: UserColor,
 	ts: u64
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 struct HistJoin {
 	home: UserHashedIP,
 	sid: UserID,
@@ -176,7 +176,7 @@ struct HistJoin {
 	color: UserColor,
 	ts: u64
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 struct HistLeave {
 	home: UserHashedIP,
 	sid: UserID,
@@ -184,7 +184,7 @@ struct HistLeave {
 	color: UserColor,
 	ts: u64
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 struct HistChNick {
 	home: UserHashedIP,
 	sid: UserID,
@@ -195,7 +195,8 @@ struct HistChNick {
 	ts: u64
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all="lowercase", tag="type")]
 enum HistEntry {
 	Message(HistMsg),
 	Join(HistJoin),
@@ -273,8 +274,8 @@ struct C2SMouse(f32, f32);
 struct S2CHello(String, UserID);
 #[derive(Debug, Clone, Serialize)]
 struct S2CRoom(RoomID, #[serde(skip)] ());
-//#[derive(Debug, Clone, Serialize)]
-//struct S2CHistory(VecDeque<HistEntry>);
+#[derive(Debug, Clone, Serialize)]
+struct S2CHistory(VecDeque<HistEntry>, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
 struct S2CUserJoined(User, u64);
 #[derive(Debug, Clone, Serialize)]
@@ -311,7 +312,7 @@ enum ServerOp {
 	// server messages
 	MsgHello(S2CHello),
 	MsgRoom(S2CRoom),
-	//MsgHistory(S2CHistory),
+	MsgHistory(S2CHistory),
 	MsgUserJoined(S2CUserJoined),
 	MsgUserLeft(S2CUserLeft),
 	MsgMouse(S2CMouse),
@@ -354,12 +355,12 @@ async fn main() {
 			},
 			ClientOp::MsgMouse(uid, duck) => {
 				let mf = ducks.get(&uid).expect("nope");
-				let rf = rooms.get(&mf.rooms[0]).expect("no way");
+				let rf = rooms.get_mut(&mf.rooms[0]).expect("no way");
 				send_broad(rf, ServerOp::MsgMouse(S2CMouse(uid, duck.0, duck.1)), &ducks).await;
 			},
 			ClientOp::MsgTyping(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
-				let rf = rooms.get(&mf.rooms[0]).expect("no way");
+				let rf = rooms.get_mut(&mf.rooms[0]).expect("no way");
 				if mf.is_typing == duck.0 { continue }
 				mf.is_typing = duck.0;
 				send_broad(rf, ServerOp::MsgTyping(S2CTyping(
@@ -375,7 +376,7 @@ async fn main() {
 			ClientOp::MsgMessage(uid, duck) => {
 				// TODO: validate
 				let mf = ducks.get_mut(&uid).expect("nope");
-				let rf = rooms.get(&mf.rooms[0]).expect("no way");
+				let rf = rooms.get_mut(&mf.rooms[0]).expect("no way");
 				send_broad(rf, ServerOp::MsgMessage(S2CMessage(TextMessage { time: timestamp(), sid: uid, content: duck.0 }, ())), &ducks).await;
 			},
 			ClientOp::MsgUserChNick(uid, duck) => {}
@@ -386,7 +387,6 @@ async fn main() {
 }
 
 async fn join_room(balls: UserID, joins: RoomID, with_da: &mut SusMap, in_the: &mut SusRoom) -> usize {
-	let duck = with_da.get_mut(&balls).expect("how did we get here?");
 	let mut room = match in_the.get_mut(&joins) {
 		None => {
 			let room = Room::new(joins.clone());
@@ -396,13 +396,15 @@ async fn join_room(balls: UserID, joins: RoomID, with_da: &mut SusMap, in_the: &
 		a => a,
 	}.unwrap();
 	room.users.push(balls);
-	duck.rooms.push(room.id.clone());
+	with_da.get_mut(&balls).expect("how did we get here?").rooms.push(room.id.clone());
+	let duck = with_da.get(&balls).expect("how did we get here?");
 	let r = duck.rooms.len();
 	send_uni(duck, ServerOp::MsgRoom(S2CRoom(joins.clone(), ()))).await;
 	send_broad(room, ServerOp::MsgUserJoined(S2CUserJoined(duck.u.clone(), timestamp())), with_da).await;
 	send_broad(room, ServerOp::MsgUserUpdate(S2CUserUpdate(
 		room.users.iter().map(|p| with_da.get(p).unwrap().u.clone()).collect(), ()
 	)), with_da).await;
+	send_uni(duck, ServerOp::MsgHistory(S2CHistory(room.hist.clone(), ()))).await;
 	// send_uni history
 	r
 }
@@ -425,10 +427,23 @@ async fn leave_room(balls: UserID, leaves: RoomID, with_da: &mut SusMap, in_the:
 async fn send_uni(to: &Susser, c: ServerOp) {
 	let _ = to.tx.send(c).await;
 }
-async fn send_broad(to: &Room, c: ServerOp, ducks: &SusMap) {
+async fn send_broad(to: &mut Room, c: ServerOp, ducks: &SusMap) {
+	match c {
+		ServerOp::MsgUserJoined(ref m) => push_history(to, HistEntry::Join(HistJoin {
+			ts: m.1,
+			nick: m.0.nick.clone(),
+			home: m.0.haship,
+			color: m.0.color,
+			sid: m.0.id
+		})),
+		_ => ()
+	}
 	join_all(to.users.iter().map(|id| send_uni(ducks.get(id).unwrap(), c.clone()))).await;
 }
-
+fn push_history(t: &mut Room, h: HistEntry) {
+	if t.hist.len() == HIST_ENTRY_MAX-1 { t.hist.pop_front(); }
+	t.hist.push_back(h);
+}
 
 // ========== connection handling side ==========
 async fn listen(l: TcpListener, t: Sender<ClientOp>) {
@@ -495,6 +510,7 @@ async fn conn(y: TcpStream, ee: UserID, t: &Sender<ClientOp>) {
 						ServerOp::MsgUserLeft(s) =>   format!("USER_LEFT\0{}",   serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgTyping(s) =>     format!("TYPING\0{}",      serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgMessage(s) =>    format!("MESSAGE\0{}",     serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgHistory(s) =>    format!("HISTORY\0{}",     serde_json::to_string(&s).unwrap()),
 					})).await.is_err() { break }
 				}
 			}
