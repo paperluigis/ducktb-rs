@@ -284,37 +284,39 @@ fn hist2json(v: &VecDeque<HistEntry>) -> json::JsonValue {
 	for entry in v.iter() {
 		let _ = a.push(match entry {
 			HistEntry::Leave(b) => object!{
-				left: true,
-				time: b.ts,
-				home: hidtostr(b.home),
-				sid: idtostr(b.sid),
-				nick: b.nick.to_string(),
-				color: u32tocol(b.color)
-			},
-			HistEntry::Join(b) => object!{
-				joined: true,
-				time: b.ts,
-				home: hidtostr(b.home),
-				sid: idtostr(b.sid),
-				nick: b.nick.to_string(),
-				color: u32tocol(b.color)
-			},
-			HistEntry::Message(b) => object!{
-				time: b.ts,
+				type: "leave",
 				home: hidtostr(b.home),
 				sid: idtostr(b.sid),
 				nick: b.nick.to_string(),
 				color: u32tocol(b.color),
-				message: b.content.clone()
+				ts: b.ts
 			},
-			HistEntry::ChNick(b) => object! {
-				time: b.ts,
+			HistEntry::Join(b) => object!{
+				type: "join",
 				home: hidtostr(b.home),
 				sid: idtostr(b.sid),
-				nick: b.old_nick.to_string(),
-				color: u32tocol(b.old_color),
-				newnick: b.new_nick.to_string(),
-				newcolor: u32tocol(b.new_color),
+				nick: b.nick.to_string(),
+				color: u32tocol(b.color),
+				ts: b.ts
+			},
+			HistEntry::Message(b) => object!{
+				type: "message",
+				home: hidtostr(b.home),
+				sid: idtostr(b.sid),
+				nick: b.nick.to_string(),
+				color: u32tocol(b.color),
+				content: b.content.clone(),
+				ts: b.ts
+			},
+			HistEntry::ChNick(b) => object! {
+				type: "chnick",
+				home: hidtostr(b.home),
+				sid: idtostr(b.sid),
+				old_nick: b.old_nick.to_string(),
+				old_color: u32tocol(b.old_color),
+				new_nick: b.new_nick.to_string(),
+				new_color: u32tocol(b.new_color),
+				ts: b.ts,
 			}
 		});
 	}
@@ -355,7 +357,7 @@ fn send_userjoin(to_room: RoomID, ducks: &SusMap, rooms: &SusRoom,
 		let _ = hoho.hist.pop_front();
 	}
 	hoho.hist.push_back(entry);
-	send_broad(&to_room, &ducks, "USER_JOINED".into(), array![{ sid: idtostr(uid), nick: nick.clone(), color: u32tocol(col), time: ts }]);
+	send_broad(&to_room, &ducks, "USER_JOINED".into(), array![{ sid: idtostr(uid), nick: nick, color: u32tocol(col) }, ts]);
 	send_broad(&to_room, &ducks, "USER_UPDATE".into(), array![ ducktosl(ducks, &to_room) ]);
 }
 
