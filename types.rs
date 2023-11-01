@@ -236,7 +236,7 @@ pub struct TextMessage {
 // `, #[serde(skip)] ()` is a workaround to treat a newtype struct as a tuple with one element
 // this is done for consistency with all other messages
 #[derive(Debug, Deserialize)]
-pub struct C2SUserJoined(pub UserNick, pub UserColor, pub RoomID);
+pub struct C2SUserJoined(pub UserNick, pub UserColor, pub Vec<RoomID>);
 #[derive(Debug, Deserialize)]
 pub struct C2SUserChNick(pub UserNick, pub UserColor);
 // boolean for exclusive (leave all other rooms)

@@ -51,7 +51,8 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 	let (tp, _) = tp.split_at(tp.len() - 1);
 	if first {
 		if tp != "USER_JOINED" { return None }
-		t.send(ClientOp::MsgUserJoined(uid, serde_json::from_str(&rr).map_err(printduck).ok()?)).await.ok()?;
+		//t.send(ClientOp::MsgUserJoined(uid, serde_json::from_str(&rr).map_err(printduck).ok()?)).await.ok()?;
+		t.send(duck_up(uid, V1C2SMessages::UserJoined(serde_json::from_str(&rr).map_err(printduck).ok()?))).await.ok()?;
 	} else {
 		// we want to die if we ever hit backpressure
 		t.try_send(match tp {
@@ -68,6 +69,8 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 }
 
 #[derive(Deserialize)]
+struct V1C2SUserJoined(UserNick, UserColor, RoomID);
+#[derive(Deserialize)]
 struct V1C2SMouse(f32, f32);
 #[derive(Deserialize)]
 struct V1C2STyping(bool, #[serde(skip)] ());
@@ -76,6 +79,7 @@ struct V1C2SMessage(String, #[serde(skip)] ());
 #[derive(Deserialize)]
 struct V1C2SRoom(RoomID, #[serde(skip)] ());
 enum V1C2SMessages {
+	UserJoined(V1C2SUserJoined),
 	Mouse(V1C2SMouse),
 	Typing(V1C2STyping),
 	Message(V1C2SMessage),
@@ -132,10 +136,11 @@ fn up_duck(a: ServerOp) -> V1S2CMessages {
 fn duck_up(uid: UserID, a: V1C2SMessages) -> ClientOp {
 	let rh = RoomHandle::new(0);
 	match a {
-		V1C2SMessages::Mouse(x)   => ClientOp::MsgMouse   (uid, C2SMouse   (rh, x.0, x.1)),
-		V1C2SMessages::Typing(x)  => ClientOp::MsgTyping  (uid, C2STyping  (rh, x.0)),
-		V1C2SMessages::Message(x) => ClientOp::MsgMessage (uid, C2SMessage (rh, x.0)),
-		V1C2SMessages::Room(x)    => ClientOp::MsgRoomJoin(uid, C2SRoomJoin(x.0, true)),
+		V1C2SMessages::UserJoined(x) => ClientOp::MsgUserJoined(uid, C2SUserJoined(x.0, x.1, vec![x.2])),
+		V1C2SMessages::Mouse(x)      => ClientOp::MsgMouse     (uid, C2SMouse     (rh, x.0, x.1)),
+		V1C2SMessages::Typing(x)     => ClientOp::MsgTyping    (uid, C2STyping    (rh, x.0)),
+		V1C2SMessages::Message(x)    => ClientOp::MsgMessage   (uid, C2SMessage   (rh, x.0)),
+		V1C2SMessages::Room(x)       => ClientOp::MsgRoomJoin  (uid, C2SRoomJoin  (x.0, true)),
 	}
 }
 

@@ -55,7 +55,8 @@ async fn main() {
 				mf.u.nick = duck.0;
 				mf.u.color = duck.1;
 				send_uni(mf, ServerOp::MsgRateLimits(S2CRateLimits::new(MAX_EVENTS.clone(), ()))).await;
-				join_room(uid, duck.2, &mut ducks, &mut rooms, false).await;
+				if duck.2.len() > MAX_ROOMS_PER_CLIENT as usize { kill_uni(mf).await; continue };
+				for a in duck.2 { join_room(uid, a, &mut ducks, &mut rooms, false).await; }
 			},
 			ClientOp::MsgMouse(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
@@ -76,6 +77,7 @@ async fn main() {
 			ClientOp::MsgRoomJoin(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
 				ratelimit_check!(mf room { kill_uni(mf).await; continue });
+				if !duck.1 && mf.rooms.len() as u8 >= MAX_ROOMS_PER_CLIENT { kill_uni(mf).await; continue }
 				join_room(uid, duck.0.clone(), &mut ducks, &mut rooms, duck.1).await;
 			},
 			ClientOp::MsgRoomLeave(uid, duck) => {
@@ -142,6 +144,7 @@ async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut
 	if exclusive {
 		leave_room_all_duck(balls, ducks, rooms).await;
 	}
+	println!("\x1b[33mroom  \x1b[34m[{}]\x1b[0m joined {}", balls, joins);
 
 	let room = match rooms.get_mut(&joins) {
 		None => {
