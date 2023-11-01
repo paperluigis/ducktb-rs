@@ -18,6 +18,8 @@ pub struct UserNick(String);
 pub struct UserColor(u32);
 #[derive(new, Hash, Eq, Clone, Copy, PartialEq, Debug, Deref)]
 pub struct UserID(u32);
+#[derive(new, Hash, Eq, Clone, Copy, PartialEq, PartialOrd, Debug, Deref, Serialize, Deserialize)]
+pub struct RoomHandle(u8);
 #[nutype(sanitize(trim) validate(max_len=40, not_empty))]
 #[derive(Clone, Hash, Eq, PartialEq, Debug, Display, Deref, Serialize, Deserialize, TryFrom)]
 pub struct RoomID(String);
@@ -194,16 +196,31 @@ pub struct Susser {
 	pub counter: SusRate,
 	pub ip: IpAddr,
 	pub tx: Sender<ServerOp>,
-	pub is_typing: bool,
+	pub is_typing: Vec<bool>,
 	pub rooms: Vec<RoomID>,
 	pub u: User
 }
 
-#[derive(Debug, Clone, Serialize)]
+impl Susser {
+	pub fn new(id: UserID, ip: IpAddr, tx: Sender<ServerOp>) -> Self {
+		Susser {
+			counter: SusRate::new(),
+			ip: ip,
+			tx: tx,
+			is_typing: vec![],
+			rooms: vec![],
+			u: User::new(id, hash_ip(&ip))
+		}
+	}
+}
+
+#[derive(new, Debug, Clone, Serialize)]
 pub struct User {
 	#[serde(rename="sid")]
 	pub id: UserID,
+	#[new(default)]
 	pub nick: UserNick,
+	#[new(default)]
 	pub color: UserColor,
 	#[serde(rename="home")]
 	pub haship: UserHashedIP
@@ -222,37 +239,40 @@ pub struct TextMessage {
 pub struct C2SUserJoined(pub UserNick, pub UserColor, pub RoomID);
 #[derive(Debug, Deserialize)]
 pub struct C2SUserChNick(pub UserNick, pub UserColor);
+// boolean for exclusive (leave all other rooms)
 #[derive(Debug, Deserialize)]
-pub struct C2SRoom(pub RoomID, #[serde(skip)] ());
+pub struct C2SRoomJoin  (pub RoomID, pub bool);
 #[derive(Debug, Deserialize)]
-pub struct C2SMessage(pub String, #[serde(skip)] ());
+pub struct C2SRoomLeave (pub RoomHandle, #[serde(skip)] ());
 #[derive(Debug, Deserialize)]
-pub struct C2STyping(pub bool, #[serde(skip)] ());
+pub struct C2SMessage   (pub RoomHandle, pub String);
 #[derive(Debug, Deserialize)]
-pub struct C2SMouse(pub f32, pub f32);
+pub struct C2STyping    (pub RoomHandle, pub bool);
+#[derive(Debug, Deserialize)]
+pub struct C2SMouse     (pub RoomHandle, pub f32, pub f32);
 
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CHello(String, UserID);
+pub struct S2CHello     (pub String, pub UserID);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CRoom(RoomID, #[serde(skip)] ());
+pub struct S2CRoom      (pub Vec<RoomID>, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CHistory(VecDeque<HistEntry>, #[serde(skip)] ());
+pub struct S2CHistory   (pub RoomHandle, pub VecDeque<HistEntry>);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CUserJoined(User, u64);
+pub struct S2CUserJoined(pub RoomHandle, pub User, pub u64);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CUserLeft(UserID, u64);
+pub struct S2CUserLeft  (pub RoomHandle, pub UserID, pub u64);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CUserChNick(UserID, (UserNick, UserColor), (UserNick, UserColor), u64);
+pub struct S2CUserChNick(pub RoomHandle, pub UserID, pub (UserNick, UserColor), pub (UserNick, UserColor), pub u64);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CMouse(UserID, f32, f32);
+pub struct S2CMouse     (pub RoomHandle, pub UserID, pub f32, pub f32);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CUserUpdate(Vec<User>, #[serde(skip)] ());
+pub struct S2CUserUpdate(pub RoomHandle, pub Vec<User>);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CTyping(Vec<UserID>, #[serde(skip)] ());
+pub struct S2CTyping    (pub RoomHandle, pub Vec<UserID>);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CMessage(TextMessage, #[serde(skip)] ());
+pub struct S2CMessage   (pub RoomHandle, pub TextMessage);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CRateLimits(SusRate, #[serde(skip)] ());
+pub struct S2CRateLimits(pub SusRate, #[serde(skip)] ());
 
 #[derive(Debug)]
 pub enum ClientOp {
@@ -264,7 +284,8 @@ pub enum ClientOp {
 	// client messages
 	MsgUserJoined(UserID, C2SUserJoined),
 	MsgUserChNick(UserID, C2SUserChNick),
-	MsgRoom(UserID, C2SRoom),
+	MsgRoomJoin(UserID, C2SRoomJoin),
+	MsgRoomLeave(UserID, C2SRoomLeave),
 	MsgMessage(UserID, C2SMessage),
 	MsgTyping(UserID, C2STyping),
 	MsgMouse(UserID, C2SMouse)
@@ -272,9 +293,6 @@ pub enum ClientOp {
 
 #[derive(Debug, Clone)]
 pub enum ServerOp {
-	// server be like "you should kill yourself NOW"
-	Disconnect,
-	// server messages
 	MsgHello(S2CHello),
 	MsgRoom(S2CRoom),
 	MsgHistory(S2CHistory),
@@ -288,42 +306,58 @@ pub enum ServerOp {
 	MsgRateLimits(S2CRateLimits)
 }
 
+#[derive(Debug, Clone)]
+pub enum SBroadOp {
+	MsgUserJoined(User, u64),
+	MsgUserLeft(UserID, u64),
+	MsgUserChNick(UserID, (UserNick, UserColor), (UserNick, UserColor), u64),
+	MsgMouse(UserID, f32, f32),
+	MsgTyping(Vec<UserID>),
+	MsgMessage(TextMessage),
+	MsgUserUpdate(Vec<User>)
+}
 
-pub fn serverop_to_histentry(c: ServerOp, ducks: &HashMap<UserID, Susser>) -> Option<HistEntry> {
+
+// ========== utility types for functions ==========
+pub fn sbroadop_to_histentry(c: SBroadOp, ducks: &HashMap<UserID, Susser>) -> Option<HistEntry> {
 	match c {
-		ServerOp::MsgUserJoined(ref m) => Some(HistEntry::Join {
-			ts: m.1,
-			nick: m.0.nick.clone(),
-			home: m.0.haship,
-			color: m.0.color,
-			sid: m.0.id
+		SBroadOp::MsgUserJoined(ref m, o) => Some(HistEntry::Join {
+			ts: o,
+			nick: m.nick.clone(),
+			home: m.haship,
+			color: m.color,
+			sid: m.id
 		}),
-		ServerOp::MsgUserLeft(ref m) => { let mf = ducks.get(&m.0).unwrap(); Some(HistEntry::Leave {
-			ts: m.1,
+		SBroadOp::MsgUserLeft(m, o) => { let mf = ducks.get(&m).unwrap(); Some(HistEntry::Leave {
+			ts: o,
 			nick: mf.u.nick.clone(),
 			home: mf.u.haship,
 			color: mf.u.color,
 			sid: mf.u.id
 		}) },
-		ServerOp::MsgUserChNick(ref m) => { let mf = ducks.get(&m.0).unwrap(); Some(HistEntry::ChNick {
-			ts: m.3,
+		SBroadOp::MsgUserChNick(m, a, n, y) => { let mf = ducks.get(&m).unwrap(); Some(HistEntry::ChNick {
+			ts: y,
 			home: mf.u.haship,
 			sid: mf.u.id,
-			old_nick: m.1.0.clone(),
-			new_nick: m.2.0.clone(),
-			old_color: m.1.1,
-			new_color: m.2.1
+			old_nick: a.0.clone(),
+			new_nick: n.0.clone(),
+			old_color: a.1,
+			new_color: n.1
 		}) },
-		ServerOp::MsgMessage(ref m) => { let mf = ducks.get(&m.0.sid).unwrap(); Some(HistEntry::Message {
-			ts: m.0.time,
+		SBroadOp::MsgMessage(m) => { let mf = ducks.get(&m.sid).unwrap(); Some(HistEntry::Message {
+			ts: m.time,
 			nick: mf.u.nick.clone(),
 			home: mf.u.haship,
 			color: mf.u.color,
 			sid: mf.u.id,
-			content: m.0.content.clone()
+			content: m.content.clone()
 		}) },
 		_ => None
 	}
+}
+
+pub fn to_room_handle(rv: &Vec<RoomID>, tf: &RoomID) -> Option<RoomHandle> {
+	Some(RoomHandle(rv.iter().position(|r| r==tf)? as u8))
 }
 
 pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
@@ -345,4 +379,11 @@ pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
 				(u64::from(oc[2]) * 49521111)
 		}
 	})
+}
+
+macro_rules! ratelimit_check {
+	($i:ident $n:ident $b:block) => {
+		$i.counter.$n += 1;
+		if($i.counter.$n > MAX_EVENTS.$n) $b
+	}
 }
