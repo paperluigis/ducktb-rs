@@ -166,18 +166,18 @@ async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut
 	r
 }
 async fn leave_room(balls: UserID, leaves: RoomHandle, ducks: &mut SusMap, rooms: &mut SusRoom) -> usize {
-	let duck = ducks.get_mut(&balls).expect("how did we get here?");
+	let duck = ducks.get(&balls).expect("how did we get here?");
 	let room = rooms.get_mut(&duck.rooms[*leaves as usize]).unwrap();
 	let idx = room.users.iter().position(|r| r==&balls);
 	if let Some(idx) = idx { room.users.swap_remove(idx); }
-	duck.rooms.swap_remove(*leaves as usize);
-	let r = duck.rooms.len();
-	if r == 0 {
+	if room.users.len() == 0 {
 		rooms.remove(&duck.rooms[*leaves as usize]);
 	} else {
 		send_broad(room, SBroadOp::MsgUserLeft(balls, timestamp()), ducks).await;
 		send_broad(room, SBroadOp::MsgUserUpdate(room.users.iter().map(|p| ducks.get(p).unwrap().u.clone()).collect()), ducks).await;
 	}
+	let r = duck.rooms.len()-1;
+	ducks.get_mut(&balls).expect("how did we get here?").rooms.swap_remove(*leaves as usize);
 	r
 }
 async fn leave_room_all_duck(balls: UserID, ducks: &mut SusMap, rooms: &mut SusRoom) {
@@ -190,8 +190,12 @@ async fn leave_room_all_duck(balls: UserID, ducks: &mut SusMap, rooms: &mut SusR
 		let room = rooms.get_mut(&d).unwrap();
 		let idx = room.users.iter().position(|r| r==&balls);
 		if let Some(idx) = idx { room.users.swap_remove(idx); }
-		send_broad(room, SBroadOp::MsgUserLeft(balls, timestamp()), ducks).await;
-		send_broad(room, SBroadOp::MsgUserUpdate(room.users.iter().map(|p| ducks.get(p).unwrap().u.clone()).collect()), ducks).await;
+		if room.users.len() == 0 {
+			rooms.remove(&d);
+		} else {
+			send_broad(room, SBroadOp::MsgUserLeft(balls, timestamp()), ducks).await;
+			send_broad(room, SBroadOp::MsgUserUpdate(room.users.iter().map(|p| ducks.get(p).unwrap().u.clone()).collect()), ducks).await;
+		}
 	}
 }
 
