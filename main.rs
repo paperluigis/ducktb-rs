@@ -54,23 +54,23 @@ async fn main() {
 				mf.u.nick = duck.0;
 				mf.u.color = duck.1;
 				send_uni(mf, ServerOp::MsgRateLimits(S2CRateLimits::new(MAX_EVENTS.clone(), ()))).await;
-				if duck.2.len() > MAX_ROOMS_PER_CLIENT as usize { kill_uni(mf).await; continue };
+				if duck.2.len() > MAX_ROOMS_PER_CLIENT as usize { kill_uni(mf).await; continue }
 				send_uni(mf, ServerOp::MsgRoom(S2CRoom::new(duck.2.clone(), ()))).await;
 				for a in duck.2 { join_room(uid, a, &mut ducks, &mut rooms, false, false).await; }
 			},
 			ClientOp::MsgMouse(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
-				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
+				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue }
 				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
 				ratelimit_check!(mf mouse { kill_uni(mf).await; continue });
 				send_broad(rf, SBroadOp::MsgMouse(uid, duck.1, duck.2), &ducks).await
 			},
 			ClientOp::MsgTyping(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
-				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
+				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue }
 				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
 				ratelimit_check!(mf typing { kill_uni(mf).await; continue });
-				if mf.is_typing[*duck.0 as usize] == duck.1 { kill_uni(mf).await; continue; }
+				if mf.is_typing[*duck.0 as usize] == duck.1 { continue }
 				mf.is_typing[*duck.0 as usize] = duck.1;
 				let b = mf.rooms[*duck.0 as usize].clone();
 				send_broad(rf, SBroadOp::MsgTyping(rf.users.iter().filter(|p| {
