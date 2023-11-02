@@ -143,7 +143,6 @@ async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut
 	if exclusive {
 		leave_room_all_duck(balls, ducks, rooms).await;
 	}
-	println!("\x1b[33mroom  \x1b[34m[{}]\x1b[0m joined {}", balls, joins);
 	{
 		let duck = ducks.get(&balls).expect("how did we get here?");
 		if let Some(s) = to_room_handle(&duck.rooms, &joins) {
@@ -184,7 +183,9 @@ async fn leave_room(balls: UserID, leaves: RoomHandle, ducks: &mut SusMap, rooms
 		send_broad(room, SBroadOp::MsgUserUpdate(room.users.iter().map(|p| ducks.get(p).unwrap().u.clone()).collect()), ducks).await;
 	}
 	let r = duck.rooms.len()-1;
-	ducks.get_mut(&balls).expect("how did we get here?").rooms.swap_remove(*leaves as usize);
+	let duck = ducks.get_mut(&balls).expect("how did we get here?");
+	duck.rooms.swap_remove(*leaves as usize);
+	send_uni(duck, ServerOp::MsgRoom(S2CRoom::new(duck.rooms.clone(), ()))).await;
 	r
 }
 async fn leave_room_all_duck(balls: UserID, ducks: &mut SusMap, rooms: &mut SusRoom) {
@@ -219,7 +220,6 @@ async fn send_broad(to: &mut Room, c: SBroadOp, ducks: &SusMap) {
 	}
 	join_all(to.users.iter().map(|id| {
 		let duck = ducks.get(id).unwrap();
-		println!("{} {:?}", to.id, duck.rooms);
 		let rh = to_room_handle(&duck.rooms, &to.id).unwrap();
 		let b = match c.clone() {
 			SBroadOp::MsgMessage(t) => ServerOp::MsgMessage(S2CMessage::new(rh, t)),

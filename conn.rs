@@ -55,12 +55,10 @@ async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>) {
 				} else { return Err(e) }
 			}
 		}
-		if proto == "" {
-			if invalid_protocol { return Err(e) }
-			else { proto = "json-v1".into() }
+		if proto == "" && invalid_protocol { return Err(e) }
+		if proto != "" {
+			resp.headers_mut().insert("sec-websocket-protocol", HeaderValue::from_str(&proto).unwrap());
 		}
-
-		resp.headers_mut().insert("sec-websocket-protocol", HeaderValue::from_str(&proto).unwrap());
 		Ok(resp)
 	};
 	let bs = accept_hdr_async(y, headcb).await;
@@ -72,7 +70,7 @@ async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>) {
 	if t.send(ClientOp::Connection(ee, balls)).await.is_err() { return };
 
 	match &*proto {
-		"json-v1" => json_v1::handle(bs, messages, t.clone(), ee).await,
+		"" | "json-v1" => json_v1::handle(bs, messages, t.clone(), ee).await,
 		"json-v2" => json_v2::handle(bs, messages, t.clone(), ee).await,
 		_ => panic!("not happening")
 	}
