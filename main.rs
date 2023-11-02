@@ -55,7 +55,8 @@ async fn main() {
 				mf.u.color = duck.1;
 				send_uni(mf, ServerOp::MsgRateLimits(S2CRateLimits::new(MAX_EVENTS.clone(), ()))).await;
 				if duck.2.len() > MAX_ROOMS_PER_CLIENT as usize { kill_uni(mf).await; continue };
-				for a in duck.2 { join_room(uid, a, &mut ducks, &mut rooms, false).await; }
+				send_uni(mf, ServerOp::MsgRoom(S2CRoom::new(duck.2.clone(), ()))).await;
+				for a in duck.2 { join_room(uid, a, &mut ducks, &mut rooms, false, false).await; }
 			},
 			ClientOp::MsgMouse(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
@@ -71,13 +72,18 @@ async fn main() {
 				ratelimit_check!(mf typing { kill_uni(mf).await; continue });
 				if mf.is_typing[*duck.0 as usize] == duck.1 { kill_uni(mf).await; continue; }
 				mf.is_typing[*duck.0 as usize] = duck.1;
-				send_broad(rf, SBroadOp::MsgTyping(rf.users.iter().filter(|p| ducks.get(p).unwrap().is_typing[*duck.0 as usize]).map(|i| i.clone()).collect()), &ducks).await;
+				let b = mf.rooms[*duck.0 as usize].clone();
+				send_broad(rf, SBroadOp::MsgTyping(rf.users.iter().filter(|p| {
+					let mf = ducks.get(p).unwrap();
+					let idx = mf.rooms.iter().position(|r| r==&b).unwrap();
+					mf.is_typing[idx]
+				}).map(|i| i.clone()).collect()), &ducks).await;
 			},
 			ClientOp::MsgRoomJoin(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
 				ratelimit_check!(mf room { kill_uni(mf).await; continue });
 				if !duck.1 && mf.rooms.len() as u8 >= MAX_ROOMS_PER_CLIENT { kill_uni(mf).await; continue }
-				join_room(uid, duck.0.clone(), &mut ducks, &mut rooms, duck.1).await;
+				join_room(uid, duck.0.clone(), &mut ducks, &mut rooms, duck.1, true).await;
 			},
 			ClientOp::MsgRoomLeave(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
@@ -139,7 +145,7 @@ async fn timer(t: Sender<ClientOp>) -> Option<()> {
 	}
 }
 
-async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut SusRoom, exclusive: bool) -> RoomHandle {
+async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut SusRoom, exclusive: bool, send_rooms: bool) -> RoomHandle {
 	if exclusive {
 		leave_room_all_duck(balls, ducks, rooms).await;
 	}
@@ -165,7 +171,7 @@ async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut
 	}
 	let duck = ducks.get(&balls).expect("how did we get here?");
 	let r = RoomHandle::new(duck.rooms.len() as u8 - 1);
-	send_uni(duck, ServerOp::MsgRoom(S2CRoom::new(duck.rooms.clone(), ()))).await;
+	if send_rooms { send_uni(duck, ServerOp::MsgRoom(S2CRoom::new(duck.rooms.clone(), ()))).await; }
 	send_broad(room, SBroadOp::MsgUserJoined(duck.u.clone(), timestamp()), ducks).await;
 	send_broad(room, SBroadOp::MsgUserUpdate(room.users.iter().map(|p| ducks.get(p).unwrap().u.clone()).collect()), ducks).await;
 	send_uni(duck, ServerOp::MsgHistory(S2CHistory::new(r, room.hist.clone()))).await;
