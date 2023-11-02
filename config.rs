@@ -17,7 +17,7 @@ pub const MAX_EVENTS: &'static SusRate = &SusRate {
 	chnick: 1,
 	room: 2,
 	message: 5,
-	typing: 20,
+	typing: 12,
 	events: 150
 };
 
