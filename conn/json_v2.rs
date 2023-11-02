@@ -33,10 +33,14 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<S
 						ServerOp::MsgHistory(s) =>    format!("HISTORY\0{}",          serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgRateLimits(s) => format!("RATE_LIMITS\0{}",      serde_json::to_string(&s).unwrap()),
 					})).await.is_err() { return }
-				}
+				} else { return }
 			}
 		}
 	}
+}
+
+fn printduck<T: std::fmt::Debug, U: std::fmt::Display + ?Sized>(b: &U, e: T) -> T {
+	println!("{}: {:?}", b, e); e
 }
 
 async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) -> Option<()> {
@@ -49,13 +53,13 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 	} else {
 		// we want to die if we ever hit backpressure
 		t.try_send(match tp {
-			"MOUSE"            => ClientOp::MsgMouse     (uid, serde_json::from_str(&rr).ok()?),
-			"TYPING"           => ClientOp::MsgTyping    (uid, serde_json::from_str(&rr).ok()?),
-			"MESSAGE"          => ClientOp::MsgMessage   (uid, serde_json::from_str(&rr).ok()?),
-			"ROOM_JOIN"        => ClientOp::MsgRoomJoin  (uid, serde_json::from_str(&rr).ok()?),
-			"ROOM_LEAVE"       => ClientOp::MsgRoomLeave (uid, serde_json::from_str(&rr).ok()?),
-			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).ok()?),
-			//"" => ClientOp::Msg(uid, serde_json::from_str::<C2S>(&rr).ok()?),
+			"MOUSE"            => ClientOp::MsgMouse     (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			"TYPING"           => ClientOp::MsgTyping    (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			"MESSAGE"          => ClientOp::MsgMessage   (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			"ROOM_JOIN"        => ClientOp::MsgRoomJoin  (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			"ROOM_LEAVE"       => ClientOp::MsgRoomLeave (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			//"" => ClientOp::Msg(uid, serde_json::from_str::<C2S>(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
 			_ => { println!("received {}, which is unimplemented...", tp); return None }
 		}).ok()?;
 	}

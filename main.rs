@@ -46,8 +46,7 @@ async fn main() {
 			},
 			ClientOp::Disconnect(uid) => {
 			    println!("\x1b[31mconn- \x1b[34m[{}]\x1b[0m", uid);
-				let balls = ducks.get(&uid).unwrap();
-				for rid in 0..balls.rooms.len() { leave_room(uid, RoomHandle::new(rid as u8), &mut ducks, &mut rooms).await; }
+				leave_room_all_duck(uid, &mut ducks, &mut rooms).await;
 				ducks.remove(&uid);
 			},
 			ClientOp::MsgUserJoined(uid, duck) => {
@@ -68,7 +67,7 @@ async fn main() {
 			ClientOp::MsgTyping(uid, duck) => {
 				let mf = ducks.get_mut(&uid).expect("nope");
 				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
-				let rf = rooms.get_mut(&mf.rooms[0]).expect("no way");
+				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
 				ratelimit_check!(mf typing { kill_uni(mf).await; continue });
 				if mf.is_typing[*duck.0 as usize] == duck.1 { kill_uni(mf).await; continue; }
 				mf.is_typing[*duck.0 as usize] = duck.1;
@@ -145,7 +144,12 @@ async fn join_room(balls: UserID, joins: RoomID, ducks: &mut SusMap, rooms: &mut
 		leave_room_all_duck(balls, ducks, rooms).await;
 	}
 	println!("\x1b[33mroom  \x1b[34m[{}]\x1b[0m joined {}", balls, joins);
-
+	{
+		let duck = ducks.get(&balls).expect("how did we get here?");
+		if let Some(s) = to_room_handle(&duck.rooms, &joins) {
+			return s;
+		}
+	}
 	let room = match rooms.get_mut(&joins) {
 		None => {
 			let room = Room::new(joins.clone());
@@ -215,6 +219,7 @@ async fn send_broad(to: &mut Room, c: SBroadOp, ducks: &SusMap) {
 	}
 	join_all(to.users.iter().map(|id| {
 		let duck = ducks.get(id).unwrap();
+		println!("{} {:?}", to.id, duck.rooms);
 		let rh = to_room_handle(&duck.rooms, &to.id).unwrap();
 		let b = match c.clone() {
 			SBroadOp::MsgMessage(t) => ServerOp::MsgMessage(S2CMessage::new(rh, t)),
