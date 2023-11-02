@@ -384,6 +384,6 @@ pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
 macro_rules! ratelimit_check {
 	($i:ident $n:ident $b:block) => {
 		$i.counter.$n += 1;
-		if $i.counter.$n > MAX_EVENTS.$n $b
+		if $i.counter.$n > MAX_EVENTS.$n { println!("whoops {} ran out of {} events", $i.u.id, stringify!($n)); $b }
 	}
 }
