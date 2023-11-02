@@ -123,6 +123,7 @@ async fn main() {
 			}
 			ClientOp::Duck(_) => {
 				for (_, sus) in &mut ducks {
+					sus.counter.room = 0;
 					sus.counter.mouse = 0;
 					sus.counter.chnick = 0;
 					sus.counter.message = 0;
