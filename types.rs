@@ -367,16 +367,16 @@ pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
 			let oc = v4.octets();
 			// hash the /16 subnet
 			0x19fa920130b0ba21u64 |
-				(u64::from(oc[0]) * 10495007) |
-				(u64::from(oc[1]) * 39950100)
+				(u64::from(oc[0]) * 0x19302010f9e0e0ea) |
+				(u64::from(oc[1]) * 0x19a0fe80e90e1008)
 		},
 		IpAddr::V6(v6) => {
 			let oc = v6.segments();
 			// hash the /48 subnet
 			0x481040b16b00b135u64 |
-				(u64::from(oc[0]) * 40100233) |
-				(u64::from(oc[1]) * 40100100) |
-				(u64::from(oc[2]) * 49521111)
+				(u64::from(oc[0]) * 0x81929401229fe0a9) |
+				(u64::from(oc[1]) * 0x28af9ebf8eacd921) |
+				(u64::from(oc[2]) * 0x829af8e029103905)
 		}
 	})
 }
