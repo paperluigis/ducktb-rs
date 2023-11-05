@@ -1,3 +1,5 @@
+use crate::config::HASHIP_SALT;
+
 use derive_new::new;
 use derive_more::{Display, Deref, From};
 use nutype::nutype;
@@ -186,6 +188,8 @@ pub struct SusRate {
 	#[new(value="0")]
 	pub message: u8,
 	#[new(value="0")]
+	pub message_dm: u8,
+	#[new(value="0")]
 	pub typing: u8,
 	#[new(value="0")]
 	pub events: u16
@@ -247,6 +251,8 @@ pub struct C2SRoomLeave (pub RoomHandle, #[serde(skip)] ());
 #[derive(Debug, Deserialize)]
 pub struct C2SMessage   (pub RoomHandle, pub String);
 #[derive(Debug, Deserialize)]
+pub struct C2SMessageDM (pub RoomHandle, pub String, pub UserID);
+#[derive(Debug, Deserialize)]
 pub struct C2STyping    (pub RoomHandle, pub bool);
 #[derive(Debug, Deserialize)]
 pub struct C2SMouse     (pub RoomHandle, pub f32, pub f32);
@@ -272,6 +278,8 @@ pub struct S2CTyping    (pub RoomHandle, pub Vec<UserID>);
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CMessage   (pub RoomHandle, pub TextMessage);
 #[derive(Debug, Clone, Serialize, new)]
+pub struct S2CMessageDM (pub RoomHandle, pub TextMessage);
+#[derive(Debug, Clone, Serialize, new)]
 pub struct S2CRateLimits(pub SusRate, #[serde(skip)] ());
 
 #[derive(Debug)]
@@ -287,6 +295,7 @@ pub enum ClientOp {
 	MsgRoomJoin(UserID, C2SRoomJoin),
 	MsgRoomLeave(UserID, C2SRoomLeave),
 	MsgMessage(UserID, C2SMessage),
+	MsgMessageDM(UserID, C2SMessageDM),
 	MsgTyping(UserID, C2STyping),
 	MsgMouse(UserID, C2SMouse)
 }
@@ -303,6 +312,7 @@ pub enum ServerOp {
 	MsgUserUpdate(S2CUserUpdate),
 	MsgTyping(S2CTyping),
 	MsgMessage(S2CMessage),
+	MsgMessageDM(S2CMessageDM),
 	MsgRateLimits(S2CRateLimits)
 }
 
@@ -367,16 +377,16 @@ pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
 			let oc = v4.octets();
 			// hash the /16 subnet
 			0x19fa920130b0ba21u64 |
-				(u64::from(oc[0]) * 0x19302010f9e0e0ea) |
-				(u64::from(oc[1]) * 0x19a0fe80e90e1008)
+				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 2).0 |
+				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 1).0
 		},
 		IpAddr::V6(v6) => {
 			let oc = v6.segments();
 			// hash the /48 subnet
 			0x481040b16b00b135u64 |
-				(u64::from(oc[0]) * 0x81929401229fe0a9) |
-				(u64::from(oc[1]) * 0x28af9ebf8eacd921) |
-				(u64::from(oc[2]) * 0x829af8e029103905)
+				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 3).0 |
+				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 2).0 |
+				u64::from(oc[2]).overflowing_mul(HASHIP_SALT / 1).0
 		}
 	})
 }

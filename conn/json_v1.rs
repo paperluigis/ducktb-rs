@@ -32,6 +32,7 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<S
 						ServerOp::MsgUserLeft(_) =>   format!("USER_LEFT\0{}",        serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgTyping(_) =>     format!("TYPING\0{}",           serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgMessage(_) =>    format!("MESSAGE\0{}",          serde_json::to_string(&up_duck(msg)).unwrap()),
+						ServerOp::MsgMessageDM(_) =>  format!("MESSAGE_DM\0{}",       serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgHistory(_) =>    format!("HISTORY\0{}",          serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgRateLimits(s) => format!("RATE_LIMITS\0{}",      serde_json::to_string(&s).unwrap()),
 					})).await.is_err() { return }
@@ -59,6 +60,7 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 			"MOUSE"            => duck_up(uid, V1C2SMessages::Mouse     (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"TYPING"           => duck_up(uid, V1C2SMessages::Typing    (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"MESSAGE"          => duck_up(uid, V1C2SMessages::Message   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
+			"MESSAGE_DM"       => duck_up(uid, V1C2SMessages::MessageDM (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"ROOM"             => duck_up(uid, V1C2SMessages::Room      (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).ok()?),
 			//"" => V1C2SMessages::Msg(uid, serde_json::from_str::<C2S>(&rr).ok()?),
@@ -77,12 +79,15 @@ struct V1C2STyping(bool, #[serde(skip)] ());
 #[derive(Deserialize)]
 struct V1C2SMessage(String, #[serde(skip)] ());
 #[derive(Deserialize)]
+struct V1C2SMessageDM(String, UserID);
+#[derive(Deserialize)]
 struct V1C2SRoom(RoomID, #[serde(skip)] ());
 enum V1C2SMessages {
 	UserJoined(V1C2SUserJoined),
 	Mouse(V1C2SMouse),
 	Typing(V1C2STyping),
 	Message(V1C2SMessage),
+	MessageDM(V1C2SMessageDM),
 	Room(V1C2SRoom)
 }
 
@@ -105,6 +110,8 @@ struct V1S2CTyping    (Vec<UserID>, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
 struct V1S2CMessage   (TextMessage, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
+struct V1S2CMessageDM (TextMessage, #[serde(skip)] ());
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum V1S2CMessages {
 	Mouse(V1S2CMouse),
@@ -115,6 +122,7 @@ enum V1S2CMessages {
 	UserLeft(V1S2CUserLeft),
 	Typing(V1S2CTyping),
 	Message(V1S2CMessage),
+	MessageDM(V1S2CMessageDM),
 	History(V1S2CHistory),
 }
 
@@ -128,6 +136,7 @@ fn up_duck(a: ServerOp) -> V1S2CMessages {
 		ServerOp::MsgUserLeft(s) => V1S2CMessages::UserLeft(V1S2CUserLeft(s.1,s.2)),
 		ServerOp::MsgTyping(s) => V1S2CMessages::Typing(V1S2CTyping(s.1,())),
 		ServerOp::MsgMessage(s) => V1S2CMessages::Message(V1S2CMessage(s.1,())),
+		ServerOp::MsgMessageDM(s) => V1S2CMessages::MessageDM(V1S2CMessageDM(s.1,())),
 		ServerOp::MsgHistory(s) => V1S2CMessages::History(V1S2CHistory(s.1,())),
 		_ => panic!("not convertable")
 	}
@@ -140,6 +149,7 @@ fn duck_up(uid: UserID, a: V1C2SMessages) -> ClientOp {
 		V1C2SMessages::Mouse(x)      => ClientOp::MsgMouse     (uid, C2SMouse     (rh, x.0, x.1)),
 		V1C2SMessages::Typing(x)     => ClientOp::MsgTyping    (uid, C2STyping    (rh, x.0)),
 		V1C2SMessages::Message(x)    => ClientOp::MsgMessage   (uid, C2SMessage   (rh, x.0)),
+		V1C2SMessages::MessageDM(x)  => ClientOp::MsgMessageDM (uid, C2SMessageDM (rh, x.0, x.1)),
 		V1C2SMessages::Room(x)       => ClientOp::MsgRoomJoin  (uid, C2SRoomJoin  (x.0, true)),
 	}
 }

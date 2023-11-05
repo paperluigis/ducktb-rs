@@ -30,6 +30,7 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<S
 						ServerOp::MsgUserLeft(s) =>   format!("USER_LEFT\0{}",        serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgTyping(s) =>     format!("TYPING\0{}",           serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgMessage(s) =>    format!("MESSAGE\0{}",          serde_json::to_string(&s).unwrap()),
+						ServerOp::MsgMessageDM(s) =>  format!("MESSAGE_DM\0{}",       serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgHistory(s) =>    format!("HISTORY\0{}",          serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgRateLimits(s) => format!("RATE_LIMITS\0{}",      serde_json::to_string(&s).unwrap()),
 					})).await.is_err() { return }
@@ -56,6 +57,7 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 			"MOUSE"            => ClientOp::MsgMouse     (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
 			"TYPING"           => ClientOp::MsgTyping    (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
 			"MESSAGE"          => ClientOp::MsgMessage   (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			"MESSAGE_DM"       => ClientOp::MsgMessageDM (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
 			"ROOM_JOIN"        => ClientOp::MsgRoomJoin  (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
 			"ROOM_LEAVE"       => ClientOp::MsgRoomLeave (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
 			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),

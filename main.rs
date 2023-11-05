@@ -103,6 +103,25 @@ async fn main() {
 					content: duck.1
 				}), &ducks).await;
 			},
+			ClientOp::MsgMessageDM(uid, duck) => {
+				// TODO: validate
+				let mf = ducks.get_mut(&uid).expect("nope");
+				ratelimit_check!(mf message_dm { kill_uni(mf).await; continue });
+				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
+				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
+				let a = rf.users.iter().find(|&&x| x==duck.2);
+				if a.is_none() { kill_uni(mf).await; continue; }
+				let a = a.unwrap();
+				let mf = ducks.get(&uid).expect("nope");
+				let tf = ducks.get(&a).expect("nope??");
+				let rh = to_room_handle(&tf.rooms, &rf.id).unwrap();
+				let b = timestamp();
+				send_uni(mf, ServerOp::MsgMessageDM(S2CMessageDM(rh, TextMessage { time: b, sid: uid, content: duck.1.clone() }))).await;
+				// if user is not dming themselves for some reason
+				if &uid != a {
+					send_uni(tf, ServerOp::MsgMessageDM(S2CMessageDM(rh, TextMessage { time: b, sid: uid, content: duck.1 }))).await;
+				}
+			},
 			ClientOp::MsgUserChNick(uid, duck) => {
 				let nick: UserNick;
 				let color: UserColor;
@@ -127,6 +146,7 @@ async fn main() {
 					sus.counter.mouse = 0;
 					sus.counter.chnick = 0;
 					sus.counter.message = 0;
+					sus.counter.message_dm = 0;
 					sus.counter.typing = 0;
 					sus.counter.events = 0;
 				}

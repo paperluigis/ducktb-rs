@@ -1,6 +1,7 @@
 use crate::types::SusRate;
 
-
+// use a sufficently random 64-bit integer here
+pub const HASHIP_SALT: u64 = 0x30e23bc61058987c;
 // what should we send as the "server" field in the hello message?
 pub const HELLO_IDENTITY: &str = "never liked ur smile brah";
 // should we trust the X-Forwarded-For header?
@@ -17,6 +18,7 @@ pub const MAX_EVENTS: &'static SusRate = &SusRate {
 	chnick: 1,
 	room: 2,
 	message: 5,
+	message_dm: 10,
 	typing: 12,
 	events: 150
 };
