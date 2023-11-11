@@ -116,10 +116,10 @@ async fn main() {
 				let tf = ducks.get(&a).expect("nope??");
 				let rh = to_room_handle(&tf.rooms, &rf.id).unwrap();
 				let b = timestamp();
-				send_uni(mf, ServerOp::MsgMessageDM(S2CMessageDM(rh, TextMessage { time: b, sid: uid, content: duck.1.clone() }))).await;
+				send_uni(mf, ServerOp::MsgMessageDM(S2CMessageDM(rh, TextMessageDM { time: b, sid: uid, sent_to: *a, content: duck.1.clone() }))).await;
 				// if user is not dming themselves for some reason
 				if &uid != a {
-					send_uni(tf, ServerOp::MsgMessageDM(S2CMessageDM(rh, TextMessage { time: b, sid: uid, content: duck.1 }))).await;
+					send_uni(tf, ServerOp::MsgMessageDM(S2CMessageDM(rh, TextMessageDM { time: b, sid: uid, sent_to: *a, content: duck.1 }))).await;
 				}
 			},
 			ClientOp::MsgUserChNick(uid, duck) => {

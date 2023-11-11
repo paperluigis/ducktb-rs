@@ -237,6 +237,14 @@ pub struct TextMessage {
 	pub content: String
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TextMessageDM {
+	pub time: u64,
+	pub sid: UserID,
+	pub sent_to: UserID,
+	pub content: String
+}
+
 // `, #[serde(skip)] ()` is a workaround to treat a newtype struct as a tuple with one element
 // this is done for consistency with all other messages
 #[derive(Debug, Deserialize)]
@@ -278,7 +286,7 @@ pub struct S2CTyping    (pub RoomHandle, pub Vec<UserID>);
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CMessage   (pub RoomHandle, pub TextMessage);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CMessageDM (pub RoomHandle, pub TextMessage);
+pub struct S2CMessageDM (pub RoomHandle, pub TextMessageDM);
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CRateLimits(pub SusRate, #[serde(skip)] ());
 

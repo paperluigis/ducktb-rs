@@ -110,7 +110,7 @@ struct V1S2CTyping    (Vec<UserID>, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
 struct V1S2CMessage   (TextMessage, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
-struct V1S2CMessageDM (TextMessage, #[serde(skip)] ());
+struct V1S2CMessageDM (TextMessageDM, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum V1S2CMessages {
