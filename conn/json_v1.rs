@@ -67,7 +67,7 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).ok()?),
 			"CUSTOM_R"         => duck_up(uid, V1C2SMessages::CustomR   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"CUSTOM_U"         => duck_up(uid, V1C2SMessages::CustomU   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			//"" => V1C2SMessages::Msg(uid, serde_json::from_str::<C2S>(&rr).ok()?),
+			//"" => V1C2SMessages::Msg(uid, serde_json::from_str::<C2S>(&rr).ok1()?),
 			_ => { println!("received {}, which is unimplemented...", tp); return None }
 		}).ok()?;
 	}

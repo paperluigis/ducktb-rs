@@ -10,7 +10,13 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 use tokio::sync::mpsc::Sender;
-use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD as base64};
+use base64::engine::{DecodePaddingMode, Engine};
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
+use base64::alphabet;
+
+const BASE64: GeneralPurpose = GeneralPurpose::new(&alphabet::STANDARD, GeneralPurposeConfig::new()
+	.with_encode_padding(false)
+	.with_decode_padding_mode(DecodePaddingMode::Indifferent));
 
 #[nutype(default="_" sanitize(trim) validate(max_len=40, not_empty))]
 #[derive(PartialEq, Clone, Debug, Display, Deref, Serialize, Deserialize, TryFrom, Default)]
@@ -62,7 +68,7 @@ impl Serialize for UserHashedIP {
 impl Serialize for UserCustomData {
 	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
 		if s.is_human_readable() {
-			s.serialize_str(&base64.encode(&self))
+			s.serialize_str(&BASE64.encode(&self))
 		} else {
 			s.serialize_bytes(&self)
 		}
@@ -94,7 +100,7 @@ impl<'de> Deserialize<'de> for UserCustomData{
 	fn deserialize<D>(d: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
 		if d.is_human_readable() {
 			let s = String::deserialize(d)?;
-			Ok(Self(base64.decode(&s).map_err(D::Error::custom)?))
+			Ok(Self(BASE64.decode(&s).map_err(D::Error::custom)?))
 		} else {
 			let b = Vec::<u8>::deserialize(d)?;
 			Ok(Self(b))
