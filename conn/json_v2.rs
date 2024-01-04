@@ -5,6 +5,28 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
+macro_rules! s2c_encode {
+	($e:ident $($a:ident : $b:ident),*) => {
+		match $e {
+			$(
+				ServerOp::$a(s) => format!(concat!(stringify!($b), "\0{}"), serde_json::to_string(&s).unwrap()),
+			)*
+		}
+	};
+}
+
+macro_rules! c2s_decode {
+	($e:ident $u:ident $r:ident $($a:ident : $b:ident),*) => {
+		match $e {
+			$(
+			stringify!($a) => ClientOp::$b($u, serde_json::from_str(&$r).map_err(|a| printduck("parsing error", a)).ok()?),
+			)*
+			//"" => ClientOp::Msg(uid, serde_json::from_str::<C2S>(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
+			_ => { println!("received {}, which is unimplemented...", $e); return None }
+		}
+	}
+}
+
 pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<ServerOp>, t: Sender<ClientOp>, ee: UserID) {
 	let mut msg_1st = true;
 	loop {
@@ -20,20 +42,22 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<S
 			}
 			msg = messages.recv() => {
 				if let Some(msg) = msg {
-					if bs.send(Message::Text(match msg {
-						ServerOp::MsgHello(s) =>      format!("HELLO\0{}",            serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgMouse(s) =>      format!("MOUSE\0{}",            serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgRoom(s) =>       format!("ROOM\0{}",             serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgUserUpdate(s) => format!("USER_UPDATE\0{}",      serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgUserJoined(s) => format!("USER_JOINED\0{}",      serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgUserChNick(s) => format!("USER_CHANGE_NICK\0{}", serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgUserLeft(s) =>   format!("USER_LEFT\0{}",        serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgTyping(s) =>     format!("TYPING\0{}",           serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgMessage(s) =>    format!("MESSAGE\0{}",          serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgMessageDM(s) =>  format!("MESSAGE_DM\0{}",       serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgHistory(s) =>    format!("HISTORY\0{}",          serde_json::to_string(&s).unwrap()),
-						ServerOp::MsgRateLimits(s) => format!("RATE_LIMITS\0{}",      serde_json::to_string(&s).unwrap()),
-					})).await.is_err() { return }
+					if bs.send(Message::Text(s2c_encode!(msg
+						MsgHello: HELLO,
+						MsgMouse: MOUSE,
+						MsgRoom: ROOM,
+						MsgUserUpdate: USER_UPDATE,
+						MsgUserJoined: USER_JOINED,
+						MsgUserChNick: USER_CHANGE_NICK,
+						MsgUserLeft: USER_LEFT,
+						MsgTyping: TYPING,
+						MsgMessage: MESSAGE,
+						MsgMessageDM: MESSAGE_DM,
+						MsgHistory: HISTORY,
+						MsgRateLimits: RATE_LIMITS,
+						MsgCustomR: CUSTOM_R,
+						MsgCustomU: CUSTOM_U
+					))).await.is_err() { return }
 				} else { return }
 			}
 		}
@@ -53,17 +77,17 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 		t.send(ClientOp::MsgUserJoined(uid, serde_json::from_str(&rr).ok()?)).await.ok()?;
 	} else {
 		// we want to die if we ever hit backpressure
-		t.try_send(match tp {
-			"MOUSE"            => ClientOp::MsgMouse     (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			"TYPING"           => ClientOp::MsgTyping    (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			"MESSAGE"          => ClientOp::MsgMessage   (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			"MESSAGE_DM"       => ClientOp::MsgMessageDM (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			"ROOM_JOIN"        => ClientOp::MsgRoomJoin  (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			"ROOM_LEAVE"       => ClientOp::MsgRoomLeave (uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			//"" => ClientOp::Msg(uid, serde_json::from_str::<C2S>(&rr).map_err(|a| printduck("duckconnect", a)).ok()?),
-			_ => { println!("received {}, which is unimplemented...", tp); return None }
-		}).ok()?;
+		t.try_send(c2s_decode!(tp uid rr
+			MOUSE: MsgMouse,
+			TYPING: MsgTyping,
+			MESSAGE: MsgMessage,
+			MESSAGE_DM: MsgMessageDM,
+			ROOM_JOIN: MsgRoomJoin,
+			ROOM_LEAVE: MsgRoomLeave,
+			USER_CHANGE_NICK: MsgUserChNick,
+			CUSTOM_R: MsgCustomR,
+			CUSTOM_U: MsgCustomU
+		)).ok()?;
 	}
 	Some(())
 }

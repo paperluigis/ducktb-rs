@@ -34,6 +34,8 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<S
 						ServerOp::MsgMessage(_) =>    format!("MESSAGE\0{}",          serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgMessageDM(_) =>  format!("MESSAGE_DM\0{}",       serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgHistory(_) =>    format!("HISTORY\0{}",          serde_json::to_string(&up_duck(msg)).unwrap()),
+						ServerOp::MsgCustomR(_) =>    format!("CUSTOM_R\0{}",         serde_json::to_string(&up_duck(msg)).unwrap()),
+						ServerOp::MsgCustomU(_) =>    format!("CUSTOM_U\0{}",         serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgRateLimits(s) => format!("RATE_LIMITS\0{}",      serde_json::to_string(&s).unwrap()),
 					})).await.is_err() { return }
 				} else { return }
@@ -63,6 +65,8 @@ async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) ->
 			"MESSAGE_DM"       => duck_up(uid, V1C2SMessages::MessageDM (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"ROOM"             => duck_up(uid, V1C2SMessages::Room      (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).ok()?),
+			"CUSTOM_R"         => duck_up(uid, V1C2SMessages::CustomR   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
+			"CUSTOM_U"         => duck_up(uid, V1C2SMessages::CustomU   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
 			//"" => V1C2SMessages::Msg(uid, serde_json::from_str::<C2S>(&rr).ok()?),
 			_ => { println!("received {}, which is unimplemented...", tp); return None }
 		}).ok()?;
@@ -82,13 +86,19 @@ struct V1C2SMessage(String, #[serde(skip)] ());
 struct V1C2SMessageDM(String, UserID);
 #[derive(Deserialize)]
 struct V1C2SRoom(RoomID, #[serde(skip)] ());
+#[derive(Deserialize)]
+struct V1C2SCustomR(String, UserCustomData);
+#[derive(Deserialize)]
+struct V1C2SCustomU(UserID, String, UserCustomData);
 enum V1C2SMessages {
 	UserJoined(V1C2SUserJoined),
 	Mouse(V1C2SMouse),
 	Typing(V1C2STyping),
 	Message(V1C2SMessage),
 	MessageDM(V1C2SMessageDM),
-	Room(V1C2SRoom)
+	Room(V1C2SRoom),
+	CustomR(V1C2SCustomR),
+	CustomU(V1C2SCustomU),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +122,10 @@ struct V1S2CMessage   (TextMessage, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
 struct V1S2CMessageDM (TextMessageDM, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize)]
+struct V1S2CCustomR   (UserID, String, UserCustomData);
+#[derive(Debug, Clone, Serialize)]
+struct V1S2CCustomU   (UserID, String, UserCustomData);
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum V1S2CMessages {
 	Mouse(V1S2CMouse),
@@ -124,6 +138,8 @@ enum V1S2CMessages {
 	Message(V1S2CMessage),
 	MessageDM(V1S2CMessageDM),
 	History(V1S2CHistory),
+	CustomR(V1S2CCustomR),
+	CustomU(V1S2CCustomU),
 }
 
 fn up_duck(a: ServerOp) -> V1S2CMessages {
@@ -138,6 +154,8 @@ fn up_duck(a: ServerOp) -> V1S2CMessages {
 		ServerOp::MsgMessage(s) => V1S2CMessages::Message(V1S2CMessage(s.1,())),
 		ServerOp::MsgMessageDM(s) => V1S2CMessages::MessageDM(V1S2CMessageDM(s.1,())),
 		ServerOp::MsgHistory(s) => V1S2CMessages::History(V1S2CHistory(s.1,())),
+		ServerOp::MsgCustomR(s) => V1S2CMessages::CustomR(V1S2CCustomR(s.1,s.2,s.3)),
+		ServerOp::MsgCustomU(s) => V1S2CMessages::CustomU(V1S2CCustomU(s.1,s.2,s.3)),
 		_ => panic!("not convertable")
 	}
 }
@@ -151,6 +169,8 @@ fn duck_up(uid: UserID, a: V1C2SMessages) -> ClientOp {
 		V1C2SMessages::Message(x)    => ClientOp::MsgMessage   (uid, C2SMessage   (rh, x.0)),
 		V1C2SMessages::MessageDM(x)  => ClientOp::MsgMessageDM (uid, C2SMessageDM (rh, x.0, x.1)),
 		V1C2SMessages::Room(x)       => ClientOp::MsgRoomJoin  (uid, C2SRoomJoin  (x.0, true)),
+		V1C2SMessages::CustomR(x)    => ClientOp::MsgCustomR  (uid, C2SCustomR   (rh, x.0, x.1)),
+		V1C2SMessages::CustomU(x)    => ClientOp::MsgCustomU  (uid, C2SCustomU   (rh, x.0, x.1, x.2)),
 	}
 }
 

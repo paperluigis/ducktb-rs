@@ -1,7 +1,7 @@
 use crate::config::HASHIP_SALT;
 
 use derive_new::new;
-use derive_more::{Display, Deref, From};
+use derive_more::{AsRef, Display, Deref, From};
 use nutype::nutype;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error;
@@ -10,6 +10,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 use tokio::sync::mpsc::Sender;
+use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD as base64};
 
 #[nutype(default="_" sanitize(trim) validate(max_len=40, not_empty))]
 #[derive(PartialEq, Clone, Debug, Display, Deref, Serialize, Deserialize, TryFrom, Default)]
@@ -27,6 +28,9 @@ pub struct RoomHandle(u8);
 pub struct RoomID(String);
 #[derive(Clone, Copy, PartialEq, Debug, Deref, From)]
 pub struct UserHashedIP(u64);
+#[derive(Clone, Debug, Deref, AsRef)]
+#[as_ref(forward)]
+pub struct UserCustomData(Vec<u8>);
 
 impl Serialize for UserID {
 	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
@@ -55,6 +59,15 @@ impl Serialize for UserHashedIP {
 		}
 	}
 }
+impl Serialize for UserCustomData {
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+		if s.is_human_readable() {
+			s.serialize_str(&base64.encode(&self))
+		} else {
+			s.serialize_bytes(&self)
+		}
+	}
+}
 impl<'de> Deserialize<'de> for UserID {
 	fn deserialize<D>(d: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
 		if d.is_human_readable() {
@@ -74,6 +87,17 @@ impl<'de> Deserialize<'de> for UserColor {
 		} else {
 			let b = u32::deserialize(d)?;
 			Ok(Self::new(b))
+		}
+	}
+}
+impl<'de> Deserialize<'de> for UserCustomData{
+	fn deserialize<D>(d: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+		if d.is_human_readable() {
+			let s = String::deserialize(d)?;
+			Ok(Self(base64.decode(&s).map_err(D::Error::custom)?))
+		} else {
+			let b = Vec::<u8>::deserialize(d)?;
+			Ok(Self(b))
 		}
 	}
 }
@@ -264,6 +288,10 @@ pub struct C2SMessageDM (pub RoomHandle, pub String, pub UserID);
 pub struct C2STyping    (pub RoomHandle, pub bool);
 #[derive(Debug, Deserialize)]
 pub struct C2SMouse     (pub RoomHandle, pub f32, pub f32);
+#[derive(Debug, Deserialize)]
+pub struct C2SCustomR   (pub RoomHandle, pub String, pub UserCustomData);
+#[derive(Debug, Deserialize)]
+pub struct C2SCustomU   (pub RoomHandle, pub UserID, pub String, pub UserCustomData);
 
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CHello     (pub String, pub UserID);
@@ -289,6 +317,10 @@ pub struct S2CMessage   (pub RoomHandle, pub TextMessage);
 pub struct S2CMessageDM (pub RoomHandle, pub TextMessageDM);
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CRateLimits(pub SusRate, #[serde(skip)] ());
+#[derive(Debug, Clone, Serialize, new)]
+pub struct S2CCustomR   (pub RoomHandle, pub UserID, pub String, pub UserCustomData);
+#[derive(Debug, Clone, Serialize, new)]
+pub struct S2CCustomU   (pub RoomHandle, pub UserID, pub String, pub UserCustomData);
 
 #[derive(Debug)]
 pub enum ClientOp {
@@ -305,7 +337,9 @@ pub enum ClientOp {
 	MsgMessage(UserID, C2SMessage),
 	MsgMessageDM(UserID, C2SMessageDM),
 	MsgTyping(UserID, C2STyping),
-	MsgMouse(UserID, C2SMouse)
+	MsgMouse(UserID, C2SMouse),
+	MsgCustomR(UserID, C2SCustomR),
+	MsgCustomU(UserID, C2SCustomU)
 }
 
 #[derive(Debug, Clone)]
@@ -321,7 +355,9 @@ pub enum ServerOp {
 	MsgTyping(S2CTyping),
 	MsgMessage(S2CMessage),
 	MsgMessageDM(S2CMessageDM),
-	MsgRateLimits(S2CRateLimits)
+	MsgRateLimits(S2CRateLimits),
+	MsgCustomR(S2CCustomR),
+	MsgCustomU(S2CCustomU)
 }
 
 #[derive(Debug, Clone)]
@@ -332,7 +368,8 @@ pub enum SBroadOp {
 	MsgMouse(UserID, f32, f32),
 	MsgTyping(Vec<UserID>),
 	MsgMessage(TextMessage),
-	MsgUserUpdate(Vec<User>)
+	MsgUserUpdate(Vec<User>),
+	MsgCustomR(UserID, String, UserCustomData),
 }
 
 
@@ -384,16 +421,16 @@ pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
 		IpAddr::V4(v4) => {
 			let oc = v4.octets();
 			// hash the /16 subnet
-			0x19fa920130b0ba21u64 |
-				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 2).0 |
+			0x19fa920130b0ba21u64 ^
+				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 2).0 ^
 				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 1).0
 		},
 		IpAddr::V6(v6) => {
 			let oc = v6.segments();
 			// hash the /48 subnet
-			0x481040b16b00b135u64 |
-				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 3).0 |
-				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 2).0 |
+			0x481040b16b00b135u64 ^
+				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 3).0 ^
+				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 2).0 ^
 				u64::from(oc[2]).overflowing_mul(HASHIP_SALT / 1).0
 		}
 	})

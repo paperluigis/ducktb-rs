@@ -139,7 +139,32 @@ async fn main() {
 						rf.users.iter().map(|p| ducks.get(p).unwrap().u.clone()).collect()
 					), &ducks).await;
 				}
-			}
+			},
+			ClientOp::MsgCustomR(uid, duck) => {
+				let mf = ducks.get_mut(&uid).expect("nope");
+				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
+				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
+				// hardcoded byte limit
+				if duck.1.len() >= 128 { kill_uni(mf).await; continue; }
+				if duck.2.len() >= 16384 { kill_uni(mf).await; continue; }
+				let msg = SBroadOp::MsgCustomR(uid, duck.1, duck.2);
+				send_broad(rf, msg, &ducks).await;
+			},
+			ClientOp::MsgCustomU(uid, duck) => {
+				let mf = ducks.get_mut(&uid).expect("nope");
+				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
+				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
+				// hardcoded byte limit
+				if duck.2.len() >= 128 { kill_uni(mf).await; continue; }
+				if duck.3.len() >= 16384 { kill_uni(mf).await; continue; }
+
+				let a = rf.users.iter().find(|&&x| x==duck.1);
+				if a.is_none() { kill_uni(mf).await; continue; }
+				let a = a.unwrap();
+				let tf = ducks.get(&a).expect("nope??");
+				let rh = to_room_handle(&tf.rooms, &rf.id).unwrap();
+				send_uni(tf, ServerOp::MsgCustomU(S2CCustomU(rh, uid, duck.2, duck.3))).await;
+			},
 			ClientOp::Duck(_) => {
 				for (_, sus) in &mut ducks {
 					sus.counter.room = 0;
@@ -255,7 +280,8 @@ async fn send_broad(to: &mut Room, c: SBroadOp, ducks: &SusMap) {
 			SBroadOp::MsgUserChNick(d,u,c,k) => ServerOp::MsgUserChNick(S2CUserChNick::new(rh, d,u,c,k)),
 			SBroadOp::MsgUserUpdate(t) => ServerOp::MsgUserUpdate(S2CUserUpdate::new(rh, t)),
 			SBroadOp::MsgTyping(t) => ServerOp::MsgTyping(S2CTyping::new(rh, t)),
-			SBroadOp::MsgMouse(d,u,k) => ServerOp::MsgMouse(S2CMouse::new(rh, d,u,k))
+			SBroadOp::MsgMouse(d,u,k) => ServerOp::MsgMouse(S2CMouse::new(rh, d,u,k)),
+			SBroadOp::MsgCustomR(d,u,k) => ServerOp::MsgCustomR(S2CCustomR::new(rh,d,u,k))
 		};
 		send_uni(duck, b)
 	})).await;
