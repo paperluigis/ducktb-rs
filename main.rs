@@ -145,8 +145,8 @@ async fn main() {
 				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
 				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
 				// hardcoded byte limit
-				if duck.1.len() >= 128 { kill_uni(mf).await; continue; }
-				if duck.2.len() >= 16384 { kill_uni(mf).await; continue; }
+				if duck.1.len() > 128 { kill_uni(mf).await; continue; }
+				if duck.2.len() > 16384 { kill_uni(mf).await; continue; }
 				let msg = SBroadOp::MsgCustomR(uid, duck.1, duck.2);
 				send_broad(rf, msg, &ducks).await;
 			},
@@ -155,8 +155,8 @@ async fn main() {
 				if *duck.0 as usize >= mf.rooms.len() { kill_uni(mf).await; continue; }
 				let rf = rooms.get_mut(&mf.rooms[*duck.0 as usize]).expect("no way");
 				// hardcoded byte limit
-				if duck.2.len() >= 128 { kill_uni(mf).await; continue; }
-				if duck.3.len() >= 16384 { kill_uni(mf).await; continue; }
+				if duck.2.len() > 128 { kill_uni(mf).await; continue; }
+				if duck.3.len() > 16384 { kill_uni(mf).await; continue; }
 
 				let a = rf.users.iter().find(|&&x| x==duck.1);
 				if a.is_none() { kill_uni(mf).await; continue; }
