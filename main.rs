@@ -16,6 +16,7 @@ use std::env;
 use std::mem::{take, swap};
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::{spawn, join};
 use tokio::net::TcpListener;
@@ -24,6 +25,7 @@ use tokio::time::{Duration, interval};
 
 type SusMap = HashMap<UserID, Susser>;
 type SusRoom = HashMap<RoomID, Room>;
+type ResumptionData = HashMap<String, ConnState>;
 
 #[tokio::main]
 async fn main() {
@@ -35,13 +37,14 @@ async fn main() {
 	let (tx_msg, mut messages) = channel(300);
 	let mut ducks = SusMap::new();
 	let mut rooms = SusRoom::new();
-	let jh1 = spawn(listen(listener, tx_msg.clone()));
-	let jh2 = spawn(timer(tx_msg));
+	let mut sessions: Arc<Mutex<_>> = Arc::new(Mutex::new(ResumptionData::new()));
+	let jh1 = spawn(listen(listener, tx_msg.clone(), sessions.clone()));
+	let jh2 = spawn(timer(tx_msg.clone()));
 	while let Some(i) = messages.recv().await {
 		match i {
-			ClientOp::Connection(uid, balls) => {
+			ClientOp::Connection(uid, balls, rid) => {
 				println!("\x1b[33mconn+ \x1b[34m[{}|{:?}]\x1b[0m", uid, balls.ip);
-				if balls.tx.send(ServerOp::MsgHello(S2CHello::new(HELLO_IDENTITY.into(), uid))).await.is_err() { break }
+				if balls.tx.send(ServerOp::MsgHello(S2CHello::new(rid, uid))).await.is_err() { break }
 				ducks.insert(uid, balls);
 			},
 			ClientOp::Disconnect(uid) => {
@@ -175,6 +178,16 @@ async fn main() {
 					sus.counter.typing = 0;
 					sus.counter.events = 0;
 				}
+				let mut ss = sessions.lock().expect("please");
+				let mut uids = Vec::new();
+				ss.retain(|k, v| {
+					v.disconnect_timer -= 1;
+					if v.disconnect_timer <= 0 {
+						uids.push(v.user_id);
+						false
+					} else { true }
+				});
+				for k in uids { let _ = tx_msg.send(ClientOp::Disconnect(k)).await; }
 			}
 		}
 	}

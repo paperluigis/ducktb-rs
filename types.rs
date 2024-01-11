@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Sender, Receiver};
 use base64::engine::{DecodePaddingMode, Engine};
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
 use base64::alphabet;
@@ -235,6 +235,13 @@ pub struct Susser {
 	pub u: User
 }
 
+#[derive(Debug)]
+pub struct ConnState {
+	pub user_id: UserID,
+	pub rx: Receiver<ServerOp>,
+	pub disconnect_timer: i32
+}
+
 impl Susser {
 	pub fn new(id: UserID, ip: IpAddr, tx: Sender<ServerOp>) -> Self {
 		Susser {
@@ -333,7 +340,7 @@ pub enum ClientOp {
 	// duck
 	Duck(u32),
 	// client connection states
-	Connection(UserID, Susser),
+	Connection(UserID, Susser, String),
 	Disconnect(UserID),
 	// client messages
 	MsgUserJoined(UserID, C2SUserJoined),

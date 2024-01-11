@@ -3,6 +3,9 @@ mod json_v2;
 
 use crate::config::*;
 use crate::types::*;
+use rand::prelude::*;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::{spawn};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Sender, channel};
@@ -12,24 +15,29 @@ use tokio_tungstenite::{
 };
 
 
-pub async fn listen(l: TcpListener, t: Sender<ClientOp>) {
+
+
+pub async fn listen(l: TcpListener, t: Sender<ClientOp>, r: Arc<Mutex<HashMap<String, ConnState>>>) {
 	let mut conn_seq = 0x48aeb931u32;
 	while let Ok((flow, _)) = l.accept().await {
-		spawn(conn(flow, UserID::new(conn_seq), t.clone()));
+		spawn(conn(flow, UserID::new(conn_seq), t.clone(), r.clone()));
 		conn_seq += 1984;
 	}
 }
 
 pub const PROTOCOLS: [&'static str; 2] = ["json-v1", "json-v2"];
 
-async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>) {
+
+
+async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<HashMap<String, ConnState>>>) {
 	let addr = y.peer_addr().expect("what da hell man");
 	let mut uip = addr.ip();
 	let mut proto: String = "".into();
+	let mut resume_id: String = "".into();
+
 	let headcb = |req: &Request, mut resp: Response| -> Result<Response, ErrorResponse> {
 		let mut invalid_protocol = false;
 		let mut e = ErrorResponse::new(None);
-		*e.status_mut() = StatusCode::BAD_REQUEST;
 
 		for (k, v) in req.headers().iter() {
 			if k == "x-forwarded-for" && TRUST_REAL_IP_HEADER {
@@ -55,25 +63,41 @@ async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>) {
 				} else { return Err(e) }
 			}
 		}
-		if proto == "" && invalid_protocol { return Err(e) }
+		if proto == "" && invalid_protocol { *e.status_mut() = StatusCode::BAD_REQUEST; return Err(e) }
 		if proto != "" {
 			resp.headers_mut().insert("sec-websocket-protocol", HeaderValue::from_str(&proto).unwrap());
 		}
+		resume_id = req.uri().query().unwrap_or("").to_string();
 		Ok(resp)
 	};
 	let bs = accept_hdr_async(y, headcb).await;
 	if bs.is_err() { return }
 	let bs = bs.unwrap();
 
-	let (tx, messages) = channel(48);
-	let balls = Susser::new(ee, uip, tx);
-	if t.send(ClientOp::Connection(ee, balls)).await.is_err() { return };
+	let qm = r.lock().expect("please").remove(&resume_id);
 
+	let mut messages;
+	let mut resumed = false;
+	if let Some(s) = qm {
+		resumed = true;
+		messages = s.rx;
+		println!("well resumption is not done yet :P");
+	} else {
+		resume_id = format!("{:0>16x}", random::<u64>());
+		let (tx, mut rx) = channel(48);
+		messages = rx;
+		let balls = Susser::new(ee, uip, tx);
+		if t.send(ClientOp::Connection(ee, balls, resume_id.clone())).await.is_err() { return };
+	}
 	match &*proto {
-		"" | "json-v1" => json_v1::handle(bs, messages, t.clone(), ee).await,
-		"json-v2" => json_v2::handle(bs, messages, t.clone(), ee).await,
+		"" | "json-v1" => json_v1::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
+		"json-v2" => json_v2::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
 		_ => panic!("not happening")
 	}
-
-	let _ = t.send(ClientOp::Disconnect(ee)).await;
+	let mu: ConnState = ConnState {
+		user_id: ee,
+		disconnect_timer: 4, // 20 seconds
+		rx: messages,
+	};
+	r.lock().expect("please").insert(resume_id, mu);
 }

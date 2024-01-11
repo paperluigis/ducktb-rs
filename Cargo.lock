@@ -163,6 +163,7 @@ dependencies = [
  "futures-util",
  "nix",
  "nutype",
+ "rand",
  "random-string",
  "serde",
  "serde_derive",

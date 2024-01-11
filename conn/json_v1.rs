@@ -7,8 +7,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
-pub async fn handle(mut bs: WebSocketStream<TcpStream>, mut messages: Receiver<ServerOp>, t: Sender<ClientOp>, ee: UserID) {
-	let mut msg_1st = true;
+pub async fn handle(mut bs: WebSocketStream<TcpStream>, messages: &mut Receiver<ServerOp>, t: Sender<ClientOp>, ee: UserID, mut msg_1st: bool) {
 	loop {
 		select!{
 			msg = bs.next() => {
