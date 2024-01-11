@@ -29,7 +29,7 @@ pub const PROTOCOLS: [&'static str; 2] = ["json-v1", "json-v2"];
 
 
 
-async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<HashMap<String, ConnState>>>) {
+async fn conn(y: TcpStream, mut ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<HashMap<String, ConnState>>>) {
 	let addr = y.peer_addr().expect("what da hell man");
 	let mut uip = addr.ip();
 	let mut proto: String = "".into();
@@ -81,7 +81,8 @@ async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<HashMa
 	if let Some(s) = qm {
 		resumed = true;
 		messages = s.rx;
-		println!("well resumption is not done yet :P");
+		ee = s.user_id;
+		if t.send(ClientOp::Resume(ee)).await.is_err() { return };
 	} else {
 		resume_id = format!("{:0>16x}", random::<u64>());
 		let (tx, mut rx) = channel(48);
@@ -96,7 +97,7 @@ async fn conn(y: TcpStream, ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<HashMa
 	}
 	let mu: ConnState = ConnState {
 		user_id: ee,
-		disconnect_timer: 4, // 20 seconds
+		disconnect_timer: 3, // 15 seconds
 		rx: messages,
 	};
 	r.lock().expect("please").insert(resume_id, mu);

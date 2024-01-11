@@ -341,6 +341,7 @@ pub enum ClientOp {
 	Duck(u32),
 	// client connection states
 	Connection(UserID, Susser, String),
+	Resume(UserID),
 	Disconnect(UserID),
 	// client messages
 	MsgUserJoined(UserID, C2SUserJoined),

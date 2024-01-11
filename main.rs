@@ -43,9 +43,14 @@ async fn main() {
 	while let Some(i) = messages.recv().await {
 		match i {
 			ClientOp::Connection(uid, balls, rid) => {
-				println!("\x1b[33mconn+ \x1b[34m[{}|{:?}]\x1b[0m", uid, balls.ip);
+				println!("\x1b[32mconn+ \x1b[34m[{}|{:?}]\x1b[0m", uid, balls.ip);
 				if balls.tx.send(ServerOp::MsgHello(S2CHello::new(rid, uid))).await.is_err() { break }
 				ducks.insert(uid, balls);
+			},
+			ClientOp::Resume(uid) => {
+				println!("\x1b[36mconn~ \x1b[34m[{}]\x1b[0m", uid);
+				let mf = ducks.get_mut(&uid).expect("nope");
+				send_uni(mf, ServerOp::MsgRoom(S2CRoom::new(mf.rooms.clone(), ()))).await;
 			},
 			ClientOp::Disconnect(uid) => {
 			    println!("\x1b[31mconn- \x1b[34m[{}]\x1b[0m", uid);
@@ -180,7 +185,7 @@ async fn main() {
 				}
 				let mut ss = sessions.lock().expect("please");
 				let mut uids = Vec::new();
-				ss.retain(|k, v| {
+				ss.retain(|_, v| {
 					v.disconnect_timer -= 1;
 					if v.disconnect_timer <= 0 {
 						uids.push(v.user_id);
