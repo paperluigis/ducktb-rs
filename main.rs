@@ -58,8 +58,9 @@ async fn main() {
 				ducks.remove(&uid);
 			},
 			ClientOp::MsgUserJoined(uid, duck) => {
+				let n = ensure_unique_nick(&ducks, duck.0);
 				let mf = ducks.get_mut(&uid).expect("nope");
-				mf.u.nick = duck.0;
+				mf.u.nick = n;
 				mf.u.color = duck.1;
 				send_uni(mf, ServerOp::MsgRateLimits(S2CRateLimits::new(MAX_EVENTS.clone(), ()))).await;
 				if duck.2.len() > MAX_ROOMS_PER_CLIENT as usize { kill_uni(mf).await; continue }
@@ -133,11 +134,14 @@ async fn main() {
 			ClientOp::MsgUserChNick(uid, duck) => {
 				let nick: UserNick;
 				let color: UserColor;
+				let n = ensure_unique_nick(&ducks, duck.0.clone());
+				let mf = ducks.get_mut(&uid).expect("nope");
+
 				let mf = ducks.get_mut(&uid).expect("nope");
 				ratelimit_check!(mf chnick { kill_uni(mf).await; continue });
 				nick = mf.u.nick.clone();
 				color = mf.u.color;
-				mf.u.nick = duck.0.clone();
+				mf.u.nick = n;
 				mf.u.color = duck.1;
 				let msg = SBroadOp::MsgUserChNick(uid, (nick, color), (duck.0, duck.1), timestamp());
 				for ri in mf.rooms.clone() {
@@ -303,6 +307,21 @@ async fn send_broad(to: &mut Room, c: SBroadOp, ducks: &SusMap) {
 		};
 		send_uni(duck, b)
 	})).await;
+}
+
+fn ensure_unique_nick(u: &SusMap, n: UserNick) -> UserNick {
+	let mut x = 0u16;
+	let mut un = n.clone();
+'a:	loop {
+		for (b, a) in u {
+			if a.u.nick == un {
+				x += 1;
+				un = UserNick::new(format!("{n}{x}")).expect("this would never be invalid... right?");
+				continue 'a;
+			}
+		}
+		return un;
+	}
 }
 
 fn push_history(t: &mut Room, h: HistEntry) {
