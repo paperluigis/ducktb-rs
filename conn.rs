@@ -97,7 +97,7 @@ async fn conn(y: TcpStream, mut ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<Ha
 	}
 	let mu: ConnState = ConnState {
 		user_id: ee,
-		disconnect_timer: 3, // 15 seconds
+		disconnect_timer: SESSION_TIMEOUT,
 		rx: messages,
 	};
 	r.lock().expect("please").insert(resume_id, mu);

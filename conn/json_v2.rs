@@ -1,8 +1,11 @@
+use crate::config::*;
 use crate::types::{ClientOp, ServerOp, UserID};
+use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio::select;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::time::interval;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 macro_rules! s2c_encode {
@@ -28,6 +31,8 @@ macro_rules! c2s_decode {
 }
 
 pub async fn handle(mut bs: WebSocketStream<TcpStream>, messages: &mut Receiver<ServerOp>, t: Sender<ClientOp>, ee: UserID, mut msg_1st: bool) {
+	let mut ping = interval(Duration::from_secs(PING_INTERVAL));
+	ping.tick().await;
 	loop {
 		select!{
 			msg = bs.next() => {
@@ -35,9 +40,17 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, messages: &mut Receiver<
 					Some(Ok(Message::Text(str))) => {
 						if message(str, ee, &t, msg_1st).await.is_none() { return }
 					}
+					// we ignore pings because we don't care
+					Some(Ok(Message::Ping(_))) => {}
+					Some(Ok(Message::Pong(_))) => {}
 					_ => return
 				}
 				msg_1st = false;
+			}
+			_ = ping.tick() => {
+				// it's pinging time
+				// The contents of the payload are not significant, so we can put anything here.
+				if bs.send(Message::Ping(vec![114,101,97,100,32,105,102,32,99,117,116,101])).await.is_err() { return }
 			}
 			msg = messages.recv() => {
 				if let Some(msg) = msg {

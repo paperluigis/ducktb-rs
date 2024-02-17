@@ -23,3 +23,7 @@ pub const MAX_EVENTS: &'static SusRate = &SusRate {
 	events: 150
 };
 
+// after how many 5-second intervals do sessions without an active connection die?
+pub const SESSION_TIMEOUT: i32 = 4;
+// interval between pings in seconds
+pub const PING_INTERVAL: u64 = 20;
