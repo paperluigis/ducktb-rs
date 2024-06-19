@@ -29,7 +29,7 @@ pub async fn listen(l: TcpListener, t: Sender<ClientOp>, r: Arc<Mutex<HashMap<St
 	}
 }
 
-pub const PROTOCOLS: [&'static str; 2] = ["json-v1", "json-v2"];
+pub const PROTOCOLS: [&'static str; 3] = ["json-v1", "json-v2", "msgpack-v1"];
 
 
 
@@ -97,6 +97,7 @@ async fn conn(y: TcpStream, mut ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<Ha
 	match &*proto {
 		"" | "json-v1" => json_v1::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
 		"json-v2" => json_v2::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
+		"msgpack-v1" => msgpack_v1::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
 		_ => panic!("not happening")
 	}
 	let mu: ConnState = ConnState {
