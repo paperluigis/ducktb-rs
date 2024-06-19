@@ -1,5 +1,9 @@
+// single-room JSON protocol
 mod json_v1;
+// multiple-room JSON protocol
 mod json_v2;
+// same as json-v2 but with a different serialization protocol
+mod msgpack_v1;
 
 use crate::config::*;
 use crate::types::*;
@@ -85,7 +89,7 @@ async fn conn(y: TcpStream, mut ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<Ha
 		if t.send(ClientOp::Resume(ee)).await.is_err() { return };
 	} else {
 		resume_id = format!("{:0>16x}", random::<u64>());
-		let (tx, mut rx) = channel(48);
+		let (tx, rx) = channel(48);
 		messages = rx;
 		let balls = Susser::new(ee, uip, tx);
 		if t.send(ClientOp::Connection(ee, balls, resume_id.clone())).await.is_err() { return };

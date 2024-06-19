@@ -208,7 +208,7 @@ pub struct Room {
 }
 
 #[derive(Debug, Clone, Serialize, new)]
-pub struct SusRate {
+pub struct Ratelimits {
 	#[new(value="0")]
 	pub mouse: u8,
 	#[new(value="0")]
@@ -227,7 +227,7 @@ pub struct SusRate {
 
 #[derive(Debug)]
 pub struct Susser {
-	pub counter: SusRate,
+	pub counter: Ratelimits,
 	pub ip: IpAddr,
 	pub tx: Sender<ServerOp>,
 	pub is_typing: Vec<bool>,
@@ -245,7 +245,7 @@ pub struct ConnState {
 impl Susser {
 	pub fn new(id: UserID, ip: IpAddr, tx: Sender<ServerOp>) -> Self {
 		Susser {
-			counter: SusRate::new(),
+			counter: Ratelimits::new(),
 			ip: ip,
 			tx: tx,
 			is_typing: vec![],
@@ -329,7 +329,7 @@ pub struct S2CMessage   (pub RoomHandle, pub TextMessage);
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CMessageDM (pub RoomHandle, pub TextMessageDM);
 #[derive(Debug, Clone, Serialize, new)]
-pub struct S2CRateLimits(pub SusRate, #[serde(skip)] ());
+pub struct S2CRateLimits(pub Ratelimits, #[serde(skip)] ());
 #[derive(Debug, Clone, Serialize, new)]
 pub struct S2CCustomR   (pub RoomHandle, pub UserID, pub String, pub UserCustomData);
 #[derive(Debug, Clone, Serialize, new)]

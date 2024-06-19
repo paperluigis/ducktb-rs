@@ -37,7 +37,7 @@ async fn main() {
 	let (tx_msg, mut messages) = channel(300);
 	let mut ducks = SusMap::new();
 	let mut rooms = SusRoom::new();
-	let mut sessions: Arc<Mutex<_>> = Arc::new(Mutex::new(ResumptionData::new()));
+	let sessions: Arc<Mutex<_>> = Arc::new(Mutex::new(ResumptionData::new()));
 	let jh1 = spawn(listen(listener, tx_msg.clone(), sessions.clone()));
 	let jh2 = spawn(timer(tx_msg.clone()));
 	while let Some(i) = messages.recv().await {
@@ -135,8 +135,6 @@ async fn main() {
 				let nick: UserNick;
 				let color: UserColor;
 				let n = ensure_unique_nick(&ducks, duck.0.clone());
-				let mf = ducks.get_mut(&uid).expect("nope");
-
 				let mf = ducks.get_mut(&uid).expect("nope");
 				ratelimit_check!(mf chnick { kill_uni(mf).await; continue });
 				nick = mf.u.nick.clone();
@@ -313,7 +311,7 @@ fn ensure_unique_nick(u: &SusMap, n: UserNick) -> UserNick {
 	let mut x = 0u16;
 	let mut un = n.clone();
 'a:	loop {
-		for (b, a) in u {
+		for (_, a) in u {
 			if a.u.nick == un {
 				x += 1;
 				un = UserNick::new(format!("{n}{x}")).expect("this would never be invalid... right?");
@@ -331,6 +329,7 @@ fn push_history(t: &mut Room, h: HistEntry) {
 
 fn timestamp() -> u64 {
 	let a = SystemTime::now();
+	// this would fail for dates before January 1, 1970 and after ...year 584942417?
 	let b = a.duration_since(UNIX_EPOCH).expect("Time travel can't be supported");
 	return b.as_millis().try_into().expect("ARE WE IN THE FUTURE??");
 }
