@@ -20,7 +20,7 @@ This is a chatbox thingy. (like IRC) (but IRC is kinda better)
 | `TextMessageDM` | An object (see below). |
 
 ## Data structures
-The following are TypeScript-ish type definitions.
+The following are TypeScript-ish type definitions. The order of fields is guaranteed.
 ```ts
 type User = {
 	id: UserID,
