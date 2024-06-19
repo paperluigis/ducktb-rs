@@ -72,6 +72,7 @@ type HistEntry = {
 ## Server-bound messages (C2S)
 | json-v2            | msgpack-v1 | argument structure |
 |:------------------ |:---------- |:------------------ |
+| `USER_JOINED`      | `0x13` | `UserNick, UserColor, RoomID[]` |
 | `MOUSE`            | `0x10` | `RoomHandle, x: f32, y: f32` |
 | `TYPING`           | `0x16` | `RoomHandle, is_typing: bool` |
 | `MESSAGE`          | `0x17` | `RoomHandle, content: str` |
