@@ -101,7 +101,7 @@ async fn message(v: Vec<u8>, uid: UserID, t: &Sender<ClientOp>, first: bool) -> 
 			MsgMessageDM: 0x18,
 			MsgRoomJoin: 0x11,
 			MsgRoomLeave: 0x12,
-			MsgUserChNick: 0x18,
+			MsgUserChNick: 0x14,
 			MsgCustomR: 0x21,
 			MsgCustomU: 0x22
 		)).ok()?;

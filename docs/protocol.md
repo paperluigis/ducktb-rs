@@ -79,7 +79,7 @@ type HistEntry = {
 | `MESSAGE_DM`       | `0x18` | `RoomHandle, content: str, send_to: UserID` |
 | `ROOM_JOIN`        | `0x11` | `RoomID, exclusive: bool` |
 | `ROOM_LEAVE`       | `0x12` | `RoomHandle` |
-| `USER_CHANGE_NICK` | `0x18` | `UserNick, UserColor` |
+| `USER_CHANGE_NICK` | `0x14` | `UserNick, UserColor` |
 | `CUSTOM_R`         | `0x21` | `RoomHandle, type: str, data: bytes` |
 | `CUSTOM_U`         | `0x22` | `RoomHandle, send_to: UserID, type: str, data: bytes` |
 
