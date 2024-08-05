@@ -7,6 +7,7 @@ mod msgpack_v1;
 
 use crate::config::*;
 use crate::types::*;
+use futures_util::SinkExt;
 use rand::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,7 +16,12 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Sender, channel};
 use tokio_tungstenite::{
 	accept_hdr_async,
-	tungstenite::{http::{StatusCode, HeaderValue},  handshake::server::{Request, Response, ErrorResponse}}
+	tungstenite::{
+		http::{StatusCode, HeaderValue},
+		handshake::server::{Request, Response, ErrorResponse},
+		protocol::CloseFrame,
+		Message
+	}
 };
 
 
@@ -76,7 +82,7 @@ async fn conn(y: TcpStream, mut ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<Ha
 	};
 	let bs = accept_hdr_async(y, headcb).await;
 	if bs.is_err() { return }
-	let bs = bs.unwrap();
+	let mut bs = bs.unwrap();
 
 	let qm = r.lock().expect("please").remove(&resume_id);
 
@@ -94,16 +100,21 @@ async fn conn(y: TcpStream, mut ee: UserID, t: Sender<ClientOp>, r: Arc<Mutex<Ha
 		let balls = Susser::new(ee, uip, tx);
 		if t.send(ClientOp::Connection(ee, balls, resume_id.clone())).await.is_err() { return };
 	}
-	match &*proto {
-		"" | "json-v1" => json_v1::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
-		"json-v2" => json_v2::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
-		"msgpack-v1" => msgpack_v1::handle(bs, &mut messages, t.clone(), ee, !resumed).await,
+	let (resumable, code, reason) = match &*proto {
+		"" | "json-v1" =>    json_v1::handle(&mut bs, &mut messages, t.clone(), ee, !resumed).await,
+		"json-v2"      =>    json_v2::handle(&mut bs, &mut messages, t.clone(), ee, !resumed).await,
+		"msgpack-v1"   => msgpack_v1::handle(&mut bs, &mut messages, t.clone(), ee, !resumed).await,
 		_ => panic!("not happening")
-	}
-	let mu: ConnState = ConnState {
-		user_id: ee,
-		disconnect_timer: SESSION_TIMEOUT,
-		rx: messages,
 	};
-	r.lock().expect("please").insert(resume_id, mu);
+	if resumable {
+		let mu: ConnState = ConnState {
+			user_id: ee,
+			disconnect_timer: SESSION_TIMEOUT,
+			rx: messages,
+		};
+		r.lock().expect("please").insert(resume_id, mu);
+	} else {
+		let _ = bs.send(Message::Close(Some(CloseFrame { code: code, reason: reason.into() }))).await;
+		t.send(ClientOp::Disconnect(ee)).await.unwrap();
+	}
 }

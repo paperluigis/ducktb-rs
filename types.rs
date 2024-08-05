@@ -1,4 +1,4 @@
-use crate::config::HASHIP_SALT;
+//use crate::config::HASHIP_SALT;
 
 use derive_new::new;
 use derive_more::{AsRef, Display, Deref, From};
@@ -434,18 +434,20 @@ pub fn hash_ip(inp: &IpAddr) -> UserHashedIP {
 	UserHashedIP(match inp {
 		IpAddr::V4(v4) => {
 			let oc = v4.octets();
-			// hash the /16 subnet
-			0x19fa920130b0ba21u64 ^
-				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 2).0 ^
-				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 1).0
+			// who cares
+			0x00000000ffff0000u64
+				| (u64::from(oc[0]) << 56)
+				| (u64::from(oc[1]) << 48)
+				| (u64::from(oc[2]) << 40)
+				| (u64::from(oc[3]) << 32)
 		},
 		IpAddr::V6(v6) => {
 			let oc = v6.segments();
-			// hash the /48 subnet
-			0x481040b16b00b135u64 ^
-				u64::from(oc[0]).overflowing_mul(HASHIP_SALT / 3).0 ^
-				u64::from(oc[1]).overflowing_mul(HASHIP_SALT / 2).0 ^
-				u64::from(oc[2]).overflowing_mul(HASHIP_SALT / 1).0
+			0u64
+				| (u64::from(oc[0]) <<  0)
+				| (u64::from(oc[1]) << 16)
+				| (u64::from(oc[2]) << 32)
+				| (u64::from(oc[3]) << 48)
 		}
 	})
 }

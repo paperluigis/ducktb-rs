@@ -1,7 +1,7 @@
 use crate::types::Ratelimits;
 
 // use a sufficently random 64-bit integer here
-pub const HASHIP_SALT: u64 = 0x30e23bc61058987c;
+//pub const HASHIP_SALT: u64 = 0x30e23bc61058987c;
 // should we trust the X-Forwarded-For header?
 pub const TRUST_REAL_IP_HEADER: bool = true;
 // how many messages should we store in rooms?

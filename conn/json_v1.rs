@@ -5,17 +5,22 @@ use std::collections::VecDeque;
 use tokio::select;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Sender, Receiver};
-use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message, tungstenite::protocol::frame::coding::CloseCode};
 
-pub async fn handle(mut bs: WebSocketStream<TcpStream>, messages: &mut Receiver<ServerOp>, t: Sender<ClientOp>, ee: UserID, mut msg_1st: bool) {
+pub async fn handle(bs: &mut WebSocketStream<TcpStream>, messages: &mut Receiver<ServerOp>, t: Sender<ClientOp>, ee: UserID, mut msg_1st: bool) -> (bool, CloseCode, String) {
 	loop {
 		select!{
 			msg = bs.next() => {
 				match msg {
 					Some(Ok(Message::Text(str))) => {
-						if message(str, ee, &t, msg_1st).await.is_none() { return }
+						if let Err(s) = message(str, ee, &t, msg_1st).await {
+							return (false, s.0, s.1)
+						}
 					}
-					_ => return
+					Some(Ok(Message::Close(o))) => {
+						return (o.is_some_and(|x| x.code == CloseCode::Away), CloseCode::Normal, String::default())
+					}
+					_ => return (false, CloseCode::Unsupported, "expected text message".into())
 				}
 				msg_1st = false;
 			}
@@ -36,41 +41,38 @@ pub async fn handle(mut bs: WebSocketStream<TcpStream>, messages: &mut Receiver<
 						ServerOp::MsgCustomR(_) =>    format!("CUSTOM_R\0{}",         serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgCustomU(_) =>    format!("CUSTOM_U\0{}",         serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgRateLimits(s) => format!("RATE_LIMITS\0{}",      serde_json::to_string(&s).unwrap()),
-					})).await.is_err() { return }
-				} else { return }
+					})).await.is_err() { return (true, CloseCode::Normal, String::default()) }
+				} else { return (true, CloseCode::Normal, String::default()) }
 			}
 		}
 	}
 }
 
-fn printduck<T: std::fmt::Debug>(e: T) -> T {
-	println!("{:?}", e); e
-}
-
-async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) -> Option<()> {
-	let f = str.find("\0")?;
+async fn message(str: String, uid: UserID, t: &Sender<ClientOp>, first: bool) -> Result<(), (CloseCode, String)> {
+	let f = str.find("\0").ok_or_else(|| { (CloseCode::Invalid, "expected message type, null byte, message data".into()) })?;
 	let (tp, rr) = str.split_at(f + 1);
 	let (tp, _) = tp.split_at(tp.len() - 1);
 	if first {
-		if tp != "USER_JOINED" { return None }
+		if tp != "USER_JOINED" { return Err((CloseCode::Protocol, "expected USER_JOINED message".into())) }
 		//t.send(ClientOp::MsgUserJoined(uid, serde_json::from_str(&rr).map_err(printduck).ok()?)).await.ok()?;
-		t.send(duck_up(uid, V1C2SMessages::UserJoined(serde_json::from_str(&rr).map_err(printduck).ok()?))).await.ok()?;
+		//t.send(duck_up(uid, V1C2SMessages::UserJoined(serde_json::from_str(&rr).map_err(|e| )))).await.ok()?;
+		t.send(duck_up(uid, V1C2SMessages::UserJoined(serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?))).await.map_err(|_| { (CloseCode::Away, "server ducked up".into()) })?;
 	} else {
 		// we want to die if we ever hit backpressure
 		t.try_send(match tp {
-			"MOUSE"            => duck_up(uid, V1C2SMessages::Mouse     (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			"TYPING"           => duck_up(uid, V1C2SMessages::Typing    (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			"MESSAGE"          => duck_up(uid, V1C2SMessages::Message   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			"MESSAGE_DM"       => duck_up(uid, V1C2SMessages::MessageDM (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			"ROOM"             => duck_up(uid, V1C2SMessages::Room      (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).ok()?),
-			"CUSTOM_R"         => duck_up(uid, V1C2SMessages::CustomR   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
-			"CUSTOM_U"         => duck_up(uid, V1C2SMessages::CustomU   (serde_json::from_str(&rr).map_err(printduck).ok()?)),
+			"MOUSE"            => duck_up(uid, V1C2SMessages::Mouse     (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
+			"TYPING"           => duck_up(uid, V1C2SMessages::Typing    (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
+			"MESSAGE"          => duck_up(uid, V1C2SMessages::Message   (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
+			"MESSAGE_DM"       => duck_up(uid, V1C2SMessages::MessageDM (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
+			"ROOM"             => duck_up(uid, V1C2SMessages::Room      (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
+			"USER_CHANGE_NICK" => ClientOp::MsgUserChNick(uid, serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?),
+			"CUSTOM_R"         => duck_up(uid, V1C2SMessages::CustomR   (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
+			"CUSTOM_U"         => duck_up(uid, V1C2SMessages::CustomU   (serde_json::from_str(&rr).map_err(|e| { (CloseCode::Invalid, format!("{}", e)) })?)),
 			//"" => V1C2SMessages::Msg(uid, serde_json::from_str::<C2S>(&rr).ok1()?),
-			_ => { println!("received {}, which is unimplemented...", tp); return None }
-		}).ok()?;
+			_ => { return Err((CloseCode::Invalid, format!("message {} not supported", tp))) }
+		}).map_err(|_| { (CloseCode::Away, "server too slow :P".into()) })?;
 	}
-	Some(())
+	Ok(())
 }
 
 #[derive(Deserialize)]

@@ -11,10 +11,11 @@ This is a chatbox thingy. (like IRC) (but IRC is kinda better)
 | `str`           | A UTF-8 encoded string. |
 | `bytes`         | A byte sequence. Represented as a base64 encoded string in JSON. |
 | `RoomHandle`    | An 8-bit integer. Represents an index into the "rooms" array. |
-| `UserHashedIP`  | A 64-bit integer, representing the user's IP address. Represented as a 16-digit hex string in JSON. |
+| `HomeID`        | A 64-bit integer, representing the user's IP address. Represented as a 16-digit hex string in JSON. |
 | `UserID`        | A 32-bit integer. Represented as a 8-digit hex string in JSON. |
 | `UserNick`      | A UTF-8 encoded string. May not be empty. |
 | `UserColor`     | A 24-bit integer representing an sRGB color (0xRRGGBB). Represented as a hex color string in JSON. |
+| `Ratelimits`    | An object (see below). Represents the number of times you can do things in 5 second intervals. |
 | `User`          | An object (see below). |
 | `TextMessage`   | An object (see below). |
 | `TextMessageDM` | An object (see below). |
@@ -23,20 +24,25 @@ This is a chatbox thingy. (like IRC) (but IRC is kinda better)
 The following are TypeScript-ish type definitions. The order of fields is guaranteed.
 ```ts
 type User = {
-	id: UserID,
+	sid: UserID,
 	nick: UserNick,
 	color: UserColor,
-	home: UserHashedIP
+	home: HomeID
 };
 type TextMessage = {
 	time: u64,
 	sid: UserID,
 	content: str,
 };
-type TextMessageDM = TextMessage & { sent_to: UserID };
+type TextMessageDM = {
+	time: u64,
+	sid: UserID,
+	sent_to: UserID,
+	content: str,
+};
 type HistEntry = {
 	type: "message",
-	home: UserHashedIP,
+	home: HomeID,
 	sid: UserID,
 	content: str,
 	nick: UserNick,
@@ -44,27 +50,36 @@ type HistEntry = {
 	ts: u64
 } | {
 	type: "join"
-	home: UserHashedIP,
+	home: HomeID,
 	sid: UserID,
 	nick: UserNick,
 	color: UserColor,
 	ts: u64
 } | {
 	type: "leave"
-	home: UserHashedIP,
+	home: HomeID,
 	sid: UserID,
 	nick: UserNick,
 	color: UserColor,
 	ts: u64
 } | {
 	type: "chnick",
-	home: UserHashedIP,
+	home: HomeID,
 	sid: UserID,
 	old_nick: UserNick,
 	old_color: UserColor,
 	new_nick: UserNick,
 	new_color: UserColor,
 	ts: u64
+};
+type Ratelimits = {
+	mouse: number,
+	chnick: number,
+	room: number,
+	message: number,
+	message_dm: number,
+	typing: number,
+	events: number
 };
 ```
 
