@@ -11,6 +11,7 @@ use tokio_tungstenite::{WebSocketStream, tungstenite::Message, tungstenite::prot
 macro_rules! s2c_encode {
 	($e:ident $($a:ident : $b:expr),*) => {
 		match $e {
+			ServerOp::UsageError(r) => { return (false, CloseCode::Invalid, r) }, 
 			$(
 				ServerOp::$a(s) => {
 					let n = rmp_serde::to_vec(&s).unwrap();

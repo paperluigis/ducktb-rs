@@ -1,0 +1,56 @@
+### ducktb-sv1 config :3
+
+[listener]
+## bind the http listener to specified addresses
+## on linux you don't have to bind to ipv4 explicitly if net.ipv6.bindv6only=0
+## e.g. [ "[::]:32000", "0.0.0.0:32000", "/tmp/ducktb.sock" ]
+listen = [
+	"/tmp/ducktb.sock",
+	"[::]:32000"
+]
+
+## trust the X-Forwarded-For header?
+trust_real_ip_header = true
+
+## how many seconds should we wait for clients to reconnect?
+## 0 to disable session resumption completely
+## e.g. 20
+session_timeout = 20
+
+## how many seconds should we send websocket pings to clients?
+## 0 to disable pings completely
+## e.g. 10
+ping_interval = 10
+
+[talker]
+## how many room history entries shall be stored?
+## 0 to disable room history
+## e.g. 100
+history_max = 512
+
+## after how many seconds should we drop an empty room's state?
+## 0 to drop immediately
+## e.g. 30
+room_empty_timer = 5
+
+## after how many seconds should a person stop typing?
+## e.g. 10
+room_typing_timer = 5
+
+
+## number of allowed events per 5 seconds
+[talker.ratelimits]
+## any event
+events = 150
+## MOUSE_MOVE
+mouse = 100
+## USER_CHANGE_NICK
+chnick = 1
+## ROOM_JOIN, ROOM_LEAVE
+room = 80
+## MESSAGE
+message = 5
+## MESSAGE_DM
+message_dm = 10
+## TYPING
+typing = 12

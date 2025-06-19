@@ -11,6 +11,7 @@ use tokio_tungstenite::{WebSocketStream, tungstenite::Message, tungstenite::prot
 macro_rules! s2c_encode {
 	($e:ident $($a:ident : $b:ident),*) => {
 		match $e {
+			ServerOp::UsageError(r) => { return (false, CloseCode::Invalid, r) }, 
 			$(
 				ServerOp::$a(s) => format!(concat!(stringify!($b), "\0{}"), serde_json::to_string(&s).unwrap()),
 			)*

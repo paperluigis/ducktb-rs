@@ -27,6 +27,7 @@ pub async fn handle(bs: &mut WebSocketStream<TcpStream>, messages: &mut Receiver
 			msg = messages.recv() => {
 				if let Some(msg) = msg {
 					if bs.send(Message::Text(match msg {
+						ServerOp::UsageError(r) =>    { return (false, CloseCode::Invalid, r) }, 
 						ServerOp::MsgHello(s) =>      format!("HELLO\0{}",            serde_json::to_string(&s).unwrap()),
 						ServerOp::MsgMouse(_) =>      format!("MOUSE\0{}",            serde_json::to_string(&up_duck(msg)).unwrap()),
 						ServerOp::MsgRoom(_) =>       format!("ROOM\0{}",             serde_json::to_string(&up_duck(msg)).unwrap()),

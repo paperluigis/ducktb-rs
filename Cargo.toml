@@ -1,28 +1,37 @@
 [package]
-name = "ducktb-sv1"
-version = "0.2.0"
+name = "ducktb"
+version = "0.4.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.98"
 base64 = "0.21.5"
+clap = { version = "4.5.27", features = ["derive"] }
+concat-idents = "1.1.5"
 derive-new = "0.5.9"
 derive_more = "0.99.17"
+figment = { version = "0.10.19", features = ["toml"] }
 futures = "0.3.29"
 futures-channel = "0.3.28"
 futures-util = "0.3.28"
-nix = "0.26.2"
+log = "0.4.27"
+nix = { version = "0.30.1", features = ["fs"] }
+nonzero_ext = "0.3.0"
 nutype = { version = "0.3.1", features = ["serde"] }
+pretty_env_logger = "0.5.0"
 rand = "0.8.5"
+ringmap = "0.1.3"
 rmp-serde = "1.3.0"
 serde = { version = "1.0.190", features = ["derive"] }
 serde_derive = "1.0.190"
 serde_json = "1.0.107"
+serde_repr = "0.1.20"
 tokio = { version = "1.29.1", features = ["net", "sync", "tokio-macros", "macros", "rt-multi-thread", "time"] }
 tokio-tungstenite = "0.20.0"
 tungstenite = "0.20.0"
 
 [[bin]]
 name = "ducktb-sv1"
-path = "main.rs"
+path = "src/main.rs"
