@@ -9,7 +9,7 @@ For `json-v2`, messages are a concatenation of:
 - message contents as a JSON array
 
 For `msgpack-v1`, messages are a concatenation of:
-- optionally a null byte followed by a 32-bit request id
+- optionally a null byte followed by a 32-bit request id (little-endian)
 - message type as a single byte
 - MessagePack-encoded message contents as a sequence
 

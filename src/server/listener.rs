@@ -1,6 +1,7 @@
 // websocket listener for the ducktb protocol
 
 mod proto_json_v2;
+mod proto_msgpack_v1;
 
 const PROTOCOLS: [&'static str; 2] = ["json-v2", "msgpack-v1"];
 
@@ -298,7 +299,7 @@ impl Listener {
 
 		let close_reason = match &*used_protocol {
 			"json-v2" => proto_json_v2::handle(&mut ws_stream, sid, tx.clone(), rx2).await,
-			"msgpack-v1" => { error!("msgpack-v1 not implemented yet"); "".into() },
+			"msgpack-v1" => proto_msgpack_v1::handle(&mut ws_stream, sid, tx.clone(), rx2).await,
 			_ => unreachable!(),
 		};
 

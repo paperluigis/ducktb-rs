@@ -106,7 +106,7 @@ impl RoomState {
 		self.users.keys().map(|e| { users.get(e).unwrap().get_obj() }).collect()
 	}
 	fn get_history(&self) -> Vec<HistEntry> {
-		self.messages.values().cloned().collect()
+		self.messages.values().filter(|e| e.message.sent_to.is_none()).cloned().collect()
 	}
 }
 
